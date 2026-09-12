@@ -7,9 +7,10 @@ Create Date: 2026-09-11 17:18:33.541956
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "85c8e434c16d"
 down_revision: Union[str, Sequence[str], None] = "3d31aa2ddba6"
@@ -44,15 +45,9 @@ delivery_trigger_enum = postgresql.ENUM(
 def upgrade() -> None:
     bind = op.get_bind()
 
-    op.execute(
-        "ALTER TYPE deliverystatus ADD VALUE IF NOT EXISTS 'PENDING'"
-    )
-    op.execute(
-        "ALTER TYPE deliverystatus ADD VALUE IF NOT EXISTS 'UNKNOWN'"
-    )
-    op.execute(
-        "ALTER TYPE deliverystatus ADD VALUE IF NOT EXISTS 'AWAITING_RETRY'"
-    )
+    op.execute("ALTER TYPE deliverystatus ADD VALUE IF NOT EXISTS 'PENDING'")
+    op.execute("ALTER TYPE deliverystatus ADD VALUE IF NOT EXISTS 'UNKNOWN'")
+    op.execute("ALTER TYPE deliverystatus ADD VALUE IF NOT EXISTS 'AWAITING_RETRY'")
 
     failure_type_enum.create(bind, checkfirst=True)
     delivery_attempt_result_enum.create(bind, checkfirst=True)

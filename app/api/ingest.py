@@ -11,7 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.core.i18n import load_translations
 from app.database.models import Delivery, DeliveryStatus, Form, Submission
 from app.database.session import get_db
-from app.services.telegram import format_submission_message, send_telegram_alert
+from app.services.delivery import attempt_delivery
+from app.services.telegram import format_submission_message
 
 router = APIRouter()
 
@@ -57,31 +58,30 @@ async def handle_form_submission(
     db.add(submission)
     await db.flush()
 
-    deliveries = [
-        Delivery(
+    msg_text = format_submission_message(form_obj.title, data, t=t)
+
+    delivery_pairs = []
+
+    for destination in form_obj.destinations:
+        delivery = Delivery(
             submission_id=submission.id,
             destination_id=destination.id,
             status=DeliveryStatus.PENDING,
         )
-        for destination in form_obj.destinations
-    ]
-    db.add_all(deliveries)
+
+        db.add(delivery)
+        delivery_pairs.append((delivery, destination))
 
     await db.commit()
 
-    msg_text = format_submission_message(form_obj.title, data, t=t)
+    for delivery, destination in delivery_pairs:
+        await attempt_delivery(
+            db=db,
+            delivery=delivery,
+            destination=destination,
+            message=msg_text,
+        )
 
-    for delivery in deliveries:
-        destination = delivery.destination
-
-        if destination.type == "telegram":
-            succeeded = await send_telegram_alert(int(destination.reference), msg_text)
-            delivery.status = (
-                DeliveryStatus.SUCCEEDED if succeeded else DeliveryStatus.FAILED
-            )
-            await db.commit()
-
-    await db.commit()
     accept = request.headers.get("accept", "")
 
     if "application/json" in accept:

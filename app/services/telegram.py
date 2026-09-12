@@ -50,7 +50,10 @@ def format_submission_message(
     return "\n".join(lines)
 
 
-async def send_telegram_alert(chat_id: int, message: str) -> bool:
+async def send_telegram_alert(chat_id: int, message: str) -> dict:
+    if not settings.TELEGRAM_BOT_TOKEN:
+        logger.error("Telegram bot token is not set in settings.")
+        return {"success": False, "error": "Bot token not configured"}
     url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -67,16 +70,43 @@ async def send_telegram_alert(chat_id: int, message: str) -> bool:
             response = await http_client.post(url, json=payload)
 
         if response.status_code == 200:
-            return True
+            return {"success": True}
 
         logger.error(
             f"Failed to send Telegram message to {chat_id}: "
             f"Status {response.status_code}, Body: {response.text}"
         )
-        return False
+        if response.status_code == 429:
+            return {"success": False, "error": "Rate limit exceeded"}
+        if response.status_code == 400 and "chat not found" in response.text:
+            return {"success": False, "error": "Chat not found"}
+        if (
+            response.status_code == 400
+            and "bot was blocked by the user" in response.text
+        ):
+            return {"success": False, "error": "Bot blocked by user"}
+        if response.status_code == 400 and "user is deactivated" in response.text:
+            return {"success": False, "error": "User is deactivated"}
+        if (
+            response.status_code == 400
+            and "user is not a member of the chat" in response.text
+        ):
+            return {"success": False, "error": "User not a member of the chat"}
+        if response.status_code == 408:
+            return {"success": False, "error": "Request timeout"}
+        if response.status_code == 500:
+            return {"success": False, "error": "Internal server error"}
+        if response.status_code == 502:
+            return {"success": False, "error": "Bad gateway"}
+        if response.status_code == 503:
+            return {"success": False, "error": "Service unavailable"}
+        if response.status_code == 504:
+            return {"success": False, "error": "Gateway timeout"}
+        return {"success": False, "error": f"HTTP {response.status_code}"}
 
     except httpx.RequestError as exc:
         logger.error(
             f"Network error while sending Telegram message to {chat_id}: {exc}"
         )
-        return False
+
+        return {"success": False, "error": "Network error"}

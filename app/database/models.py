@@ -89,7 +89,7 @@ class Submission(Base):
 
     form: Mapped["Form"] = relationship(back_populates="submissions")
     deliveries: Mapped[list["Delivery"]] = relationship(
-        back_populates="submission", cascade="all, delete-orphan"
+        back_populates="submission", cascade="all, delete-orphan", lazy="raise"
     )
 
 
