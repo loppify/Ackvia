@@ -4,3 +4,4 @@
 .venv
 *docs/
 .env.docker
+.env.test

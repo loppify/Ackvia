@@ -29,6 +29,7 @@ class DeliveryStatus(str, enum.Enum):
     FAILED = "failed"
     UNKNOWN = "unknown"
     AWAITING_RETRY = "awaiting_retry"
+    PROCESSING = "processing"
 
 
 class FailureType(str, enum.Enum):
@@ -94,6 +95,7 @@ class Submission(Base):
 
 
 class Delivery(Base):
+    __tablename__ = "deliveries"
     __table_args__ = (
         UniqueConstraint(
             "submission_id", "destination_id", name="uq_delivery_submission_destination"
@@ -123,6 +125,9 @@ class Delivery(Base):
     last_error: Mapped[str | None] = mapped_column(String, nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     external_reference: Mapped[str | None] = mapped_column(String(255))
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     submission: Mapped["Submission"] = relationship(back_populates="deliveries")
     destination: Mapped["Destination"] = relationship(
         lazy="selectin", back_populates="deliveries"
@@ -133,8 +138,10 @@ class Delivery(Base):
 
 
 class DeliveryAttempt(Base):
+    __tablename__ = "delivery_attempts"
+
     delivery_id: Mapped[int] = mapped_column(
-        ForeignKey("deliverys.id", ondelete="CASCADE")
+        ForeignKey("deliveries.id", ondelete="CASCADE")
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[DeliveryAttemptResult | None]

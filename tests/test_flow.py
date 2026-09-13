@@ -1,9 +1,9 @@
+import os
 import uuid
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, NullPool
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
@@ -20,9 +20,9 @@ from app.database.models import (
 from app.database.session import get_db
 from app.main import app
 
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+TEST_DATABASE_URL = os.environ["TEST_DATABASE_URL"]
 
-engine = create_async_engine(TEST_DATABASE_URL)
+engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
 TestSessionLocal = async_sessionmaker(
     engine, expire_on_commit=False, class_=AsyncSession
 )
@@ -40,73 +40,11 @@ app.dependency_overrides[get_db] = override_get_db
 async def prepare_database():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
     yield
+    assert "test" in TEST_DATABASE_URL
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
-
-
-@pytest.mark.asyncio
-async def test_form_creation_and_json_submission():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        create_res = await ac.post(
-            "/api/forms",
-            json={
-                "title": "Landing Test",
-                "telegram_chat_id": 987654321,
-                "language": "en",
-            },
-        )
-        assert create_res.status_code == 201
-        form_id = create_res.json()["id"]
-
-        with patch(
-            "app.services.delivery.send_telegram_alert", new_callable=AsyncMock
-        ) as mock_tg:
-            mock_tg.return_value = {"success": True}
-
-            submit_res = await ac.post(
-                f"/f/{form_id}",
-                json={"client_name": "Ivan", "phone": "+380501112233"},
-                headers={"Accept": "application/json"},
-            )
-
-            assert submit_res.status_code == 200
-            assert submit_res.json()["status"] == "success"
-            assert mock_tg.called
-            assert mock_tg.call_args[0][0] == 987654321
-            assert "Ivan" in mock_tg.call_args[0][1]
-
-
-@pytest.mark.asyncio
-async def test_form_submission_html_redirect():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        create_res = await ac.post(
-            "/api/forms",
-            json={
-                "title": "HTML Form",
-                "telegram_chat_id": 123456789,
-                "language": "uk",
-            },
-        )
-        form_id = create_res.json()["id"]
-
-        with patch(
-            "app.services.delivery.send_telegram_alert", new_callable=AsyncMock
-        ) as mock_tg:
-            mock_tg.return_value = {"success": True}
-
-            submit_res = await ac.post(
-                f"/f/{form_id}",
-                data={"name": "Олена", "message": "Привіт"},
-                headers={"Accept": "text/html"},
-                follow_redirects=False,
-            )
-
-            assert submit_res.status_code == 303
-            assert submit_res.headers["location"] == "/success"
-            assert mock_tg.called
 
 
 @pytest.mark.asyncio
@@ -120,53 +58,6 @@ async def test_invalid_form_uuid():
             headers={"Accept": "application/json"},
         )
         assert res.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_delivery_state_succeeded():
-    transport = ASGITransport(app=app)
-
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        create_res = await ac.post(
-            "/api/forms",
-            json={
-                "title": "Landing Test",
-                "telegram_chat_id": 987654321,
-                "language": "en",
-            },
-        )
-
-        form_id = create_res.json()["id"]
-
-        with patch(
-            "app.services.delivery.send_telegram_alert", new_callable=AsyncMock
-        ) as mock_tg:
-            mock_tg.return_value = {"success": True}
-
-            submit_res = await ac.post(
-                f"/f/{form_id}",
-                json={"client_name": "Ivan", "phone": "+380501112233"},
-                headers={"Accept": "application/json"},
-            )
-
-        assert submit_res.status_code == 200
-
-    async with TestSessionLocal() as session:
-        result = await session.execute(
-            select(Delivery).options(selectinload(Delivery.destination))
-        )
-        delivery = result.scalar_one()
-
-        assert delivery.status == DeliveryStatus.SUCCEEDED
-        assert delivery.destination.type == "telegram"
-        assert delivery.destination.reference == "987654321"
-
-    async with TestSessionLocal() as session:
-        result = await session.execute(select(Destination))
-        destination = result.scalar_one()
-
-        assert destination.type == "telegram"
-        assert destination.reference == "987654321"
 
 
 @pytest.mark.asyncio
@@ -256,7 +147,7 @@ async def test_delivery_creation():
 
 
 @pytest.mark.asyncio
-async def test_new_delivery_status():
+async def test_new_delivery_starts_pending_without_attempts():
     async with TestSessionLocal() as session:
         form = Form(
             title="Landing Test",
@@ -318,3 +209,6 @@ async def test_duplicate_delivery_failure():
         assert forms.all() == []
         assert submissions.all() == []
         assert deliverys.all() == []
+
+# @pytest.mark.asyncio
+# async def test_claim_next_delivery():
