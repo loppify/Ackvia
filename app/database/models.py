@@ -8,10 +8,12 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
-    func, Index, text,
+    func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import (
@@ -122,7 +124,6 @@ class Delivery(Base):
             "next_retry_at",
             postgresql_where=(text("status = 'AWAITING_RETRY'")),
         ),
-
     )
     submission_id: Mapped[int] = mapped_column(
         ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False

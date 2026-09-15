@@ -17,11 +17,13 @@ from sqlalchemy.orm import selectinload
 from app.database.models import (
     Base,
     Delivery,
+    DeliveryAttempt,
+    DeliveryAttemptResult,
     DeliveryStatus,
     Destination,
     FailureType,
     Form,
-    Submission, DeliveryAttemptResult, DeliveryAttempt,
+    Submission,
 )
 from app.database.session import get_db
 from app.main import app
@@ -82,8 +84,8 @@ async def db():
 
 
 async def create_delivery(
-        db: AsyncSession,
-        status: DeliveryStatus = DeliveryStatus.PENDING,
+    db: AsyncSession,
+    status: DeliveryStatus = DeliveryStatus.PENDING,
 ) -> Delivery:
     form = Form(
         title="Test form",
@@ -106,9 +108,7 @@ async def create_delivery(
         destination=destination,
         status=status,
         failure_type=(
-            FailureType.PERMANENT
-            if status == DeliveryStatus.FAILED
-            else None
+            FailureType.PERMANENT if status == DeliveryStatus.FAILED else None
         ),
     )
 
@@ -128,8 +128,8 @@ async def test_invalid_form_uuid():
     transport = ASGITransport(app=app)
 
     async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
+        transport=transport,
+        base_url="http://test",
     ) as client:
         random_id = uuid.uuid4()
 
@@ -173,18 +173,10 @@ async def test_delivery_creation(db: AsyncSession):
     db.add(form)
     await db.commit()
 
-    stored_form = await db.scalar(
-        select(Form).order_by(Form.id)
-    )
-    stored_destination = await db.scalar(
-        select(Destination).order_by(Destination.id)
-    )
-    stored_submission = await db.scalar(
-        select(Submission).order_by(Submission.id)
-    )
-    stored_delivery = await db.scalar(
-        select(Delivery).order_by(Delivery.id)
-    )
+    stored_form = await db.scalar(select(Form).order_by(Form.id))
+    stored_destination = await db.scalar(select(Destination).order_by(Destination.id))
+    stored_submission = await db.scalar(select(Submission).order_by(Submission.id))
+    stored_delivery = await db.scalar(select(Delivery).order_by(Delivery.id))
 
     assert stored_form is not None
     assert stored_destination is not None
@@ -199,7 +191,7 @@ async def test_delivery_creation(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_new_delivery_starts_pending_without_attempts(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -225,11 +217,7 @@ async def test_new_delivery_starts_pending_without_attempts(
     db.add(form)
     await db.commit()
 
-    result = await db.execute(
-        select(Delivery).options(
-            selectinload(Delivery.attempts)
-        )
-    )
+    result = await db.execute(select(Delivery).options(selectinload(Delivery.attempts)))
     delivery = result.scalar_one()
 
     assert delivery.status == DeliveryStatus.PENDING
@@ -287,7 +275,7 @@ async def test_duplicate_delivery_failure(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_delivery_states_are_independent(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -341,18 +329,13 @@ async def test_delivery_states_are_independent(
     await db.commit()
 
     result = await db.execute(
-        select(Delivery).where(
-            Delivery.submission_id == submission.id
-        )
+        select(Delivery).where(Delivery.submission_id == submission.id)
     )
     deliveries = result.scalars().all()
 
     assert len(deliveries) == 3
 
-    statuses = {
-        delivery.status
-        for delivery in deliveries
-    }
+    statuses = {delivery.status for delivery in deliveries}
 
     assert statuses == {
         DeliveryStatus.SUCCEEDED,
@@ -373,19 +356,15 @@ async def test_delivery_states_are_independent(
     ],
 )
 async def test_delivery_status_is_persisted(
-        db: AsyncSession,
-        status: DeliveryStatus,
+    db: AsyncSession,
+    status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
         status=status,
     )
 
-    result = await db.execute(
-        select(Delivery).where(
-            Delivery.id == delivery.id
-        )
-    )
+    result = await db.execute(select(Delivery).where(Delivery.id == delivery.id))
     stored_delivery = result.scalar_one()
 
     assert stored_delivery.status == status
@@ -398,17 +377,14 @@ async def test_delivery_status_is_persisted(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_can_be_selected_when_due(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
         status=DeliveryStatus.AWAITING_RETRY,
     )
 
-    delivery.next_retry_at = (
-            datetime.now(timezone.utc)
-            - timedelta(seconds=1)
-    )
+    delivery.next_retry_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     await db.commit()
 
     now = datetime.now(timezone.utc)
@@ -426,17 +402,14 @@ async def test_awaiting_retry_delivery_can_be_selected_when_due(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_is_not_selected_before_due(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
         status=DeliveryStatus.AWAITING_RETRY,
     )
 
-    delivery.next_retry_at = (
-            datetime.now(timezone.utc)
-            + timedelta(hours=1)
-    )
+    delivery.next_retry_at = datetime.now(timezone.utc) + timedelta(hours=1)
     await db.commit()
 
     now = datetime.now(timezone.utc)
@@ -454,7 +427,7 @@ async def test_awaiting_retry_delivery_is_not_selected_before_due(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_schedules_retry(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -496,7 +469,7 @@ async def test_retryable_failure_schedules_retry(
 
 @pytest.mark.asyncio
 async def test_retry_delay_increases_with_attempt_count(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -530,6 +503,7 @@ async def test_retry_delay_increases_with_attempt_count(
 
     assert before + expected_delay <= delivery.next_retry_at
     assert delivery.next_retry_at <= after + expected_delay
+
 
 @pytest.mark.asyncio
 async def test_retryable_failure_exhausts_retries(
