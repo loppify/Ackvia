@@ -1,13 +1,34 @@
 name: CI/CD Pipeline
+
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ackvia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/ackvia_test
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/ackvia_test
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,18 +51,21 @@ jobs:
       - name: Run Ruff Formatting Check
         run: uv run ruff format --check .
 
+      - name: Run Alembic Migrations
+        run: uv run alembic upgrade head
+
       - name: Run Tests
         run: uv run pytest
 
-      - name: Run Alembic Migrations
-        run: uv run alembic upgrade head
   deploy:
     needs: lint-and-test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
+
     environment:
       name: Production
       url: https://formrelay-5ysr.onrender.com/
+
     steps:
       - name: Trigger Render Deploy Hook
         run: |
