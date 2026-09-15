@@ -19,9 +19,8 @@ LOCALES_PATH = Path(__file__).resolve().parent.parent / "translations"
 
 
 def format_submission_message(
-        form_title: str, payload: dict, t: Callable[[str], str]
+    form_title: str, payload: dict, t: Callable[[str], str]
 ) -> str:
-    return_data = {}
     current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     lines = [
@@ -73,9 +72,9 @@ async def send_telegram_alert(chat_id: int, message: str) -> dict:
         if response.status_code == 200:
             return {
                 "success": True,
-                "external_reference": str(response.json()
-                                          .get("result", {})
-                                          .get("message_id")),
+                "external_reference": str(
+                    response.json().get("result", {}).get("message_id")
+                ),
             }
 
         logger.error(
@@ -95,8 +94,8 @@ async def send_telegram_alert(chat_id: int, message: str) -> dict:
                 "failure_type": "permanent_failure",
             }
         if (
-                response.status_code == 400
-                and "bot was blocked by the user" in response.text
+            response.status_code == 400
+            and "bot was blocked by the user" in response.text
         ):
             return_data = {
                 "success": False,
@@ -110,8 +109,8 @@ async def send_telegram_alert(chat_id: int, message: str) -> dict:
                 "failure_type": "permanent_failure",
             }
         if (
-                response.status_code == 400
-                and "user is not a member of the chat" in response.text
+            response.status_code == 400
+            and "user is not a member of the chat" in response.text
         ):
             return_data = {
                 "success": False,

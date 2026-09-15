@@ -1,6 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from operator import and_
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,11 +20,21 @@ from app.database.models import (
 from app.database.session import async_session_maker
 from app.services.telegram import format_submission_message, send_telegram_alert
 
+MAX_DELIVERY_ATTEMPTS = 5
+RETRY_BASE_DELAY_SECONDS = 30
+
 
 async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
+    now = datetime.now(timezone.utc)
     result = await db.execute(
         select(Delivery)
-        .where(Delivery.status == DeliveryStatus.PENDING)
+        .where(or_(
+            Delivery.status == DeliveryStatus.PENDING,
+            and_(
+                Delivery.status == DeliveryStatus.AWAITING_RETRY,
+                Delivery.next_retry_at <= now,
+            )
+        ))
         .order_by(Delivery.created_at)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -41,14 +52,15 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
 
 
 async def get_delivery_for_processing(
-    db: AsyncSession, delivery_id: int
+        db: AsyncSession, delivery_id: int
 ) -> Delivery | None:
     result = await db.execute(
         select(Delivery)
         .where(Delivery.id == delivery_id)
         .options(
             selectinload(Delivery.destination),
-            selectinload(Delivery.submission).selectinload(Submission.form))
+            selectinload(Delivery.submission).selectinload(Submission.form),
+        )
     )
     return result.scalar_one_or_none()
 
@@ -69,7 +81,7 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 
 
 async def finish_delivery_attempt(
-    db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
+        db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
     now = datetime.now(timezone.utc)
     error = res.get("error", "Unknown error")
@@ -94,6 +106,7 @@ async def finish_delivery_attempt(
             delivery.status = DeliveryStatus.FAILED
             delivery.failure_type = FailureType.PERMANENT
             delivery.last_error = error
+            delivery.next_retry_at = None
 
         elif res.get("failure_type") == "retryable_failure":
             delivery_attempt.result = DeliveryAttemptResult.RETRYABLE_FAILURE
@@ -101,11 +114,13 @@ async def finish_delivery_attempt(
 
             delivery.last_error = error
 
-            if delivery.attempt_count < 5:
+            if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
                 delivery.status = DeliveryStatus.AWAITING_RETRY
+                delivery.next_retry_at = now + timedelta(seconds=(RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))))
             else:
                 delivery.status = DeliveryStatus.FAILED
                 delivery.failure_type = FailureType.RETRIES_EXHAUSTED
+                delivery.next_retry_at = None
 
         else:
             delivery_attempt.result = DeliveryAttemptResult.UNKNOWN

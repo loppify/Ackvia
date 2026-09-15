@@ -3,7 +3,8 @@ import enum
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Form, Destination
+from app.database.models import Destination, Form
+
 
 class DestinationType(str, enum.Enum):
     TELEGRAM = "telegram"
@@ -21,13 +22,15 @@ class FormCreate(BaseModel):
 
 
 async def create_form(
-        db: AsyncSession, title: str, language: str, destinations: list[DestinationCreate]
+    db: AsyncSession, title: str, language: str, destinations: list[DestinationCreate]
 ):
 
     form = Form(title=title, language=language)
 
     for destination_data in destinations:
-        destination = Destination(form=form, type=destination_data.type, reference=destination_data.reference)
+        destination = Destination(
+            form=form, type=destination_data.type, reference=destination_data.reference
+        )
         db.add(destination)
     db.add(form)
     await db.commit()

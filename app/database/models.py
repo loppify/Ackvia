@@ -11,7 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
-    func,
+    func, Index, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import (
@@ -81,6 +81,14 @@ class Form(Base):
 
 
 class Submission(Base):
+    __table_args__ = (
+        Index(
+            "ix_submissions_form_id_created_at",
+            "form_id",
+            "created_at",
+        ),
+    )
+
     form_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("forms.id", ondelete="CASCADE"), nullable=False
     )
@@ -108,6 +116,13 @@ class Delivery(Base):
             """,
             name="ck_delivery_failure_type",
         ),
+        Index("ix_deliveries_destination_id", "destination_id"),
+        Index(
+            "ix_deliveries_awaiting_retry_next_retry_at",
+            "next_retry_at",
+            postgresql_where=(text("status = 'AWAITING_RETRY'")),
+        ),
+
     )
     submission_id: Mapped[int] = mapped_column(
         ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False
@@ -139,7 +154,13 @@ class Delivery(Base):
 
 class DeliveryAttempt(Base):
     __tablename__ = "delivery_attempts"
-
+    __table_args__ = (
+        Index(
+            "ix_delivery_attempts_delivery_id_created_at",
+            "delivery_id",
+            "created_at",
+        ),
+    )
     delivery_id: Mapped[int] = mapped_column(
         ForeignKey("deliveries.id", ondelete="CASCADE")
     )
@@ -151,6 +172,12 @@ class DeliveryAttempt(Base):
 
 
 class Destination(Base):
+    __table_args__ = (
+        Index(
+            "ix_destinations_form_id",
+            "form_id",
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     form_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("forms.id", ondelete="CASCADE"), nullable=False
