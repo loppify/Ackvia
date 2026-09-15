@@ -276,12 +276,14 @@
                 },
                 body: JSON.stringify({
                     title,
-                    telegram_chat_id: parseInt(chatId),
+                    destinations: [{type: "telegram",
+                        reference: chatId}],
                     language: "{{ language }}"
                 })
             });
 
             if (!res.ok) {
+                console.log(await res.json());
                 throw new Error("Failed to create endpoint");
             }
 
