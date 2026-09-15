@@ -28,15 +28,13 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
     now = datetime.now(timezone.utc)
     result = await db.execute(
         select(Delivery)
-        .where(
-            or_(
-                Delivery.status == DeliveryStatus.PENDING,
-                and_(
-                    Delivery.status == DeliveryStatus.AWAITING_RETRY,
-                    Delivery.next_retry_at <= now,
-                ),
+        .where(or_(
+            Delivery.status == DeliveryStatus.PENDING,
+            and_(
+                Delivery.status == DeliveryStatus.AWAITING_RETRY,
+                Delivery.next_retry_at <= now,
             )
-        )
+        ))
         .order_by(Delivery.created_at)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -54,7 +52,7 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
 
 
 async def get_delivery_for_processing(
-    db: AsyncSession, delivery_id: int
+        db: AsyncSession, delivery_id: int
 ) -> Delivery | None:
     result = await db.execute(
         select(Delivery)
@@ -83,7 +81,7 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 
 
 async def finish_delivery_attempt(
-    db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
+        db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
     now = datetime.now(timezone.utc)
     error = res.get("error", "Unknown error")
@@ -118,11 +116,7 @@ async def finish_delivery_attempt(
 
             if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
                 delivery.status = DeliveryStatus.AWAITING_RETRY
-                delivery.next_retry_at = now + timedelta(
-                    seconds=(
-                        RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))
-                    )
-                )
+                delivery.next_retry_at = now + timedelta(seconds=(RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))))
             else:
                 delivery.status = DeliveryStatus.FAILED
                 delivery.failure_type = FailureType.RETRIES_EXHAUSTED
