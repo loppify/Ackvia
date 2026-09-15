@@ -1,8 +1,8 @@
 """Add db indexes
 
-Revision ID: 902fc606e261
+Revision ID: a9f1a893a862
 Revises: 0bc438ed7411
-Create Date: 2026-09-15 10:10:49.326696
+Create Date: 2026-09-15 11:54:20.876921
 
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "902fc606e261"
+revision: str = "a9f1a893a862"
 down_revision: Union[str, Sequence[str], None] = "0bc438ed7411"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
