@@ -11,10 +11,11 @@ services:
         fromDatabase:
           name: formrelay-db
           property: connectionString
+
   - type: worker
     name: ackvia-delivery-worker
     runtime: docker
-    plan: free
+    plan: 0.5c-512mb
     dockerfilePath: ./Dockerfile
     dockerCommand: uv run python -m app.workers.delivery
     envVars:
@@ -24,6 +25,7 @@ services:
         fromDatabase:
           name: formrelay-db
           property: connectionString
+
 databases:
   - name: formrelay-db
     plan: free
