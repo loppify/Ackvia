@@ -29,9 +29,11 @@ from app.database.session import get_db
 from app.main import app
 from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
+    claim_next_delivery,
     finish_delivery_attempt,
     process_delivery,
 )
+from app.workers.delivery import recovery_stale_deliveries
 
 load_dotenv(".env.test")
 
@@ -647,7 +649,114 @@ async def test_permanent_failre_still_works(db: AsyncSession, monkeypatch):
         .where(Delivery.id == delivery.id)
     )
 
+    assert delivery is not None
     assert delivery.status == DeliveryStatus.FAILED
     assert delivery.failure_type == FailureType.PERMANENT
     assert delivery.attempts[-1].result == DeliveryAttemptResult.PERMANENT_FAILURE
     assert delivery.next_retry_at is None
+
+
+@pytest.mark.asyncio
+async def test_old_processing_delivery_is_recovered(db: AsyncSession):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+    await recovery_stale_deliveries(db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.AWAITING_RETRY
+    assert delivery.next_retry_at is not None
+    assert delivery.processing_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_recent_processing_delivery_is_untouched(db: AsyncSession):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+
+    await recovery_stale_deliveries(db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.PROCESSING
+
+
+@pytest.mark.asyncio
+async def test_old_(db: AsyncSession):
+    deliveries = [
+        await create_delivery(db, DeliveryStatus.SUCCEEDED),
+        await create_delivery(db, DeliveryStatus.FAILED),
+        await create_delivery(db, DeliveryStatus.AWAITING_RETRY),
+    ]
+    for delivery in deliveries:
+        delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(
+            minutes=1
+        )
+
+    await recovery_stale_deliveries(db)
+
+    deliveries = await db.scalars(
+        select(Delivery).options(selectinload(Delivery.attempts))
+    )
+    for delivery in deliveries.all():
+        assert delivery is not None
+        assert delivery.status in [
+            DeliveryStatus.FAILED,
+            DeliveryStatus.SUCCEEDED,
+            DeliveryStatus.AWAITING_RETRY,
+        ]
+
+
+async def test_stale_delivery_with_exhausted_attempts_fails(db: AsyncSession):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    delivery.attempt_count = MAX_DELIVERY_ATTEMPTS
+
+    await recovery_stale_deliveries(db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.FAILED
+    assert delivery.failure_type == FailureType.RETRIES_EXHAUSTED
+    assert delivery.next_retry_at is None
+    assert delivery.processing_started_at is None
+
+
+async def test_recovered_delivery_can_be_claimed(db: AsyncSession):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+    await recovery_stale_deliveries(db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.AWAITING_RETRY
+    assert delivery.next_retry_at is not None
+    assert delivery.processing_started_at is None
+
+    delivery = await claim_next_delivery(db)
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.PROCESSING
+    assert delivery.processing_started_at is not None
