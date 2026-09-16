@@ -1,14 +1,12 @@
 import html
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 import httpx
+from loguru import logger
 
 from app.core.config import settings
-
-logger = logging.getLogger(__name__)
 
 http_client = httpx.AsyncClient(
     timeout=httpx.Timeout(10.0, connect=5.0),
@@ -62,6 +60,7 @@ async def send_telegram_alert(chat_id: int, message: str) -> dict:
     }
 
     try:
+        logger.debug("Telegram request started")
         response = await http_client.post(url, json=payload)
 
         if response.status_code == 400 and "can't parse entities" in response.text:
@@ -76,11 +75,6 @@ async def send_telegram_alert(chat_id: int, message: str) -> dict:
                     response.json().get("result", {}).get("message_id")
                 ),
             }
-
-        logger.error(
-            f"Failed to send Telegram message to {chat_id}: "
-            f"Status {response.status_code}, Body: {response.text}"
-        )
         if response.status_code == 429:
             return_data = {
                 "success": False,
@@ -154,10 +148,8 @@ async def send_telegram_alert(chat_id: int, message: str) -> dict:
                 "failure_type": "retryable_failure",
             }
 
-    except httpx.RequestError as exc:
-        logger.error(
-            f"Network error while sending Telegram message to {chat_id}: {exc}"
-        )
+    except httpx.RequestError:
+        logger.error("Network error while sending Telegram message to {chat_id}: {exc}")
 
         return_data = {
             "success": False,

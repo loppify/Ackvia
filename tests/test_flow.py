@@ -27,7 +27,10 @@ from app.database.models import (
 )
 from app.database.session import get_db
 from app.main import app
-from app.services.delivery import finish_delivery_attempt
+from app.services.delivery import (
+    finish_delivery_attempt,
+    process_delivery, MAX_DELIVERY_ATTEMPTS,
+)
 
 load_dotenv(".env.test")
 
@@ -84,8 +87,8 @@ async def db():
 
 
 async def create_delivery(
-    db: AsyncSession,
-    status: DeliveryStatus = DeliveryStatus.PENDING,
+        db: AsyncSession,
+        status: DeliveryStatus = DeliveryStatus.PENDING,
 ) -> Delivery:
     form = Form(
         title="Test form",
@@ -128,8 +131,8 @@ async def test_invalid_form_uuid():
     transport = ASGITransport(app=app)
 
     async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
+            transport=transport,
+            base_url="http://test",
     ) as client:
         random_id = uuid.uuid4()
 
@@ -191,7 +194,7 @@ async def test_delivery_creation(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_new_delivery_starts_pending_without_attempts(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -275,7 +278,7 @@ async def test_duplicate_delivery_failure(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_delivery_states_are_independent(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -356,8 +359,8 @@ async def test_delivery_states_are_independent(
     ],
 )
 async def test_delivery_status_is_persisted(
-    db: AsyncSession,
-    status: DeliveryStatus,
+        db: AsyncSession,
+        status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -377,7 +380,7 @@ async def test_delivery_status_is_persisted(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_can_be_selected_when_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -402,7 +405,7 @@ async def test_awaiting_retry_delivery_can_be_selected_when_due(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_is_not_selected_before_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -427,7 +430,7 @@ async def test_awaiting_retry_delivery_is_not_selected_before_due(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_schedules_retry(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -469,7 +472,7 @@ async def test_retryable_failure_schedules_retry(
 
 @pytest.mark.asyncio
 async def test_retry_delay_increases_with_attempt_count(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -507,7 +510,7 @@ async def test_retry_delay_increases_with_attempt_count(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_exhausts_retries(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -539,4 +542,111 @@ async def test_retryable_failure_exhausts_retries(
     assert attempt.result == DeliveryAttemptResult.RETRYABLE_FAILURE
     assert attempt.error == "Still unavailable"
     assert attempt.finished_at is not None
+    assert delivery.next_retry_at is None
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatch):
+    async def fake_execute_delivery_attempt(destination, message):
+        raise RuntimeError("Test Failure")
+
+    monkeypatch.setattr(
+        "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
+    )
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+
+    with pytest.raises(RuntimeError):
+        await process_delivery(delivery.id, db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery.status == DeliveryStatus.AWAITING_RETRY
+    assert delivery.attempts[-1].result == DeliveryAttemptResult.UNKNOWN
+    assert delivery.attempts[-1].finished_at is not None
+    assert delivery.next_retry_at is not None
+    assert delivery.processing_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_respects_max_attempts(db: AsyncSession, monkeypatch):
+    async def fake_execute_delivery_attempt(destination, message):
+        raise RuntimeError("Test Failure")
+
+    monkeypatch.setattr(
+        "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
+    )
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.attempt_count = MAX_DELIVERY_ATTEMPTS - 1
+
+    with pytest.raises(RuntimeError):
+        await process_delivery(delivery.id, db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery.status == DeliveryStatus.FAILED
+    assert delivery.failure_type == FailureType.RETRIES_EXHAUSTED
+    assert delivery.attempts[-1].result == DeliveryAttemptResult.UNKNOWN
+    assert delivery.next_retry_at is None and delivery.processing_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_successful_processing_still_works(db: AsyncSession, monkeypatch):
+    async def fake_execute_delivery_attempt(destination, message):
+        return {
+            "success": True,
+            "external_reference": str(12334567)}
+
+    monkeypatch.setattr(
+        "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
+    )
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.attempt_count = MAX_DELIVERY_ATTEMPTS - 1
+
+    await process_delivery(delivery.id, db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.SUCCEEDED
+    assert delivery.attempts[-1].result == DeliveryAttemptResult.SUCCEEDED
+    assert delivery.delivered_at is not None
+    assert delivery.processing_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_permanent_failre_still_works(db: AsyncSession, monkeypatch):
+    async def fake_execute_delivery_attempt(destination, message):
+        return {
+            "success": False,
+            "error": "Chat not found",
+            "failure_type": "permanent_failure",
+        }
+
+    monkeypatch.setattr(
+        "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
+    )
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+
+    await process_delivery(delivery.id, db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery.status == DeliveryStatus.FAILED
+    assert delivery.failure_type == FailureType.PERMANENT
+    assert delivery.attempts[-1].result == DeliveryAttemptResult.PERMANENT_FAILURE
     assert delivery.next_retry_at is None

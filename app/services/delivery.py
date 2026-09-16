@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from operator import and_
 
+from loguru import logger
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +18,6 @@ from app.database.models import (
     Form,
     Submission,
 )
-from app.database.session import async_session_maker
 from app.services.telegram import format_submission_message, send_telegram_alert
 
 MAX_DELIVERY_ATTEMPTS = 5
@@ -45,10 +45,16 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
     if delivery is None:
         await db.rollback()
         return None
+    logger.bind(
+        delivery_id=delivery.id,
+        submission_id=delivery.submission_id,
+        destination_id=delivery.destination_id,
+    )
 
     delivery.status = DeliveryStatus.PROCESSING
     delivery.processing_started_at = datetime.now(timezone.utc)
     await db.commit()
+    logger.info("Delivery claimed")
 
     return delivery
 
@@ -85,6 +91,12 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 async def finish_delivery_attempt(
     db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
+    log = logger.bind(
+        delivery_id=delivery.id,
+        submission_id=delivery.submission_id,
+        destination_id=delivery.destination_id,
+        attempt_count=delivery.attempt_count,
+    )
     now = datetime.now(timezone.utc)
     error = res.get("error", "Unknown error")
 
@@ -100,6 +112,7 @@ async def finish_delivery_attempt(
         delivery.failure_type = None
         delivery.last_error = None
         delivery.next_retry_at = None
+        log.info("Delivery succeeded")
     else:
         if res.get("failure_type") == "permanent_failure":
             delivery_attempt.result = DeliveryAttemptResult.PERMANENT_FAILURE
@@ -109,6 +122,7 @@ async def finish_delivery_attempt(
             delivery.failure_type = FailureType.PERMANENT
             delivery.last_error = error
             delivery.next_retry_at = None
+            log.bind(error=error).error("Delivery permanently failed")
 
         elif res.get("failure_type") == "retryable_failure":
             delivery_attempt.result = DeliveryAttemptResult.RETRYABLE_FAILURE
@@ -123,10 +137,16 @@ async def finish_delivery_attempt(
                         RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))
                     )
                 )
+                log.bind(
+                    error=delivery_attempt.error, next_retry_at=delivery.next_retry_at
+                ).warning("Delivery retry scheduled.")
             else:
                 delivery.status = DeliveryStatus.FAILED
                 delivery.failure_type = FailureType.RETRIES_EXHAUSTED
                 delivery.next_retry_at = None
+                log.bind(error=delivery_attempt.error).error(
+                    "Delivery retries exhausted"
+                )
 
         else:
             delivery_attempt.result = DeliveryAttemptResult.UNKNOWN
@@ -134,11 +154,14 @@ async def finish_delivery_attempt(
 
             delivery.status = DeliveryStatus.UNKNOWN
             delivery.last_error = error
+            log.info("Delivery result unknown")
 
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
+        log.exception("Failed to commit delivery attempt")
+
         raise
 
 
@@ -151,22 +174,96 @@ def build_submission_message(form: Form, payload: dict) -> str:
     return format_submission_message(form.title, payload, t=t)
 
 
-async def process_delivery(delivery_id: int) -> None:
-    async with async_session_maker() as db:
+async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
+    log = logger.bind(delivery_id=delivery_id)
+    delivery = None
+    attempt = None
+
+    try:
         delivery = await get_delivery_for_processing(db, delivery_id)
 
         if delivery is None:
+            log.warning("Delivery not found")
             return
 
         if delivery.status != DeliveryStatus.PROCESSING:
+            log.bind(status=delivery.status).warning(
+                "Delivery is not in processing state"
+            )
             return
 
         attempt = await start_attempt(db, delivery)
 
         message = build_submission_message(
-            delivery.submission.form, delivery.submission.payload
+            delivery.submission.form,
+            delivery.submission.payload,
         )
 
-        result = await execute_delivery_attempt(delivery.destination, message)
+        result = await execute_delivery_attempt(
+            delivery.destination,
+            message,
+        )
 
-        await finish_delivery_attempt(db, delivery, attempt, result)
+        await finish_delivery_attempt(
+            db,
+            delivery,
+            attempt,
+            result,
+        )
+
+    except Exception as exc:
+        log.exception("Unexpected error while processing delivery")
+
+        delivery_db_id = delivery.id if delivery is not None else None
+        attempt_id = attempt.id if attempt is not None else None
+
+        await db.rollback()
+
+        if delivery_db_id is None:
+            raise
+
+        delivery = await get_delivery_for_processing(db, delivery_id)
+
+        if delivery is None:
+            raise
+
+        if attempt_id is not None:
+            attempt = await db.get(DeliveryAttempt, attempt_id)
+
+        now = datetime.now(timezone.utc)
+        error = str(exc)
+        delivery.processing_started_at = None
+        delivery.last_error = error
+
+        if attempt is not None:
+            attempt.finished_at = now
+            attempt.result = DeliveryAttemptResult.UNKNOWN
+            attempt.error = error
+
+        if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
+            delivery.status = DeliveryStatus.AWAITING_RETRY
+            delivery.failure_type = None
+            delivery.next_retry_at = now + timedelta(
+                seconds=RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))
+            )
+            log.bind(
+                attempt_count=delivery.attempt_count,
+                next_retry_at=delivery.next_retry_at,
+            ).warning("Delivery recovered and retry scheduled")
+
+        else:
+            delivery.status = DeliveryStatus.FAILED
+            delivery.failure_type = FailureType.RETRIES_EXHAUSTED
+            delivery.next_retry_at = None
+
+            log.bind(
+                attempt_count=delivery.attempt_count,
+            ).error("Delivery failed after retries exhausted")
+
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            log.exception("Failed to persist delivery recovery")
+            raise
+        raise
