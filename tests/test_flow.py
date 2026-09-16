@@ -28,9 +28,12 @@ from app.database.models import (
 from app.database.session import get_db
 from app.main import app
 from app.services.delivery import (
+    MAX_DELIVERY_ATTEMPTS,
+    claim_next_delivery,
     finish_delivery_attempt,
-    process_delivery, MAX_DELIVERY_ATTEMPTS,
+    process_delivery,
 )
+from app.workers.delivery import recovery_stale_deliveries
 
 load_dotenv(".env.test")
 
@@ -87,8 +90,8 @@ async def db():
 
 
 async def create_delivery(
-        db: AsyncSession,
-        status: DeliveryStatus = DeliveryStatus.PENDING,
+    db: AsyncSession,
+    status: DeliveryStatus = DeliveryStatus.PENDING,
 ) -> Delivery:
     form = Form(
         title="Test form",
@@ -131,8 +134,8 @@ async def test_invalid_form_uuid():
     transport = ASGITransport(app=app)
 
     async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
+        transport=transport,
+        base_url="http://test",
     ) as client:
         random_id = uuid.uuid4()
 
@@ -194,7 +197,7 @@ async def test_delivery_creation(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_new_delivery_starts_pending_without_attempts(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -278,7 +281,7 @@ async def test_duplicate_delivery_failure(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_delivery_states_are_independent(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -359,8 +362,8 @@ async def test_delivery_states_are_independent(
     ],
 )
 async def test_delivery_status_is_persisted(
-        db: AsyncSession,
-        status: DeliveryStatus,
+    db: AsyncSession,
+    status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -380,7 +383,7 @@ async def test_delivery_status_is_persisted(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_can_be_selected_when_due(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -405,7 +408,7 @@ async def test_awaiting_retry_delivery_can_be_selected_when_due(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_is_not_selected_before_due(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -430,7 +433,7 @@ async def test_awaiting_retry_delivery_is_not_selected_before_due(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_schedules_retry(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -472,7 +475,7 @@ async def test_retryable_failure_schedules_retry(
 
 @pytest.mark.asyncio
 async def test_retry_delay_increases_with_attempt_count(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -510,7 +513,7 @@ async def test_retry_delay_increases_with_attempt_count(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_exhausts_retries(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -572,7 +575,9 @@ async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_unexpected_exception_respects_max_attempts(db: AsyncSession, monkeypatch):
+async def test_unexpected_exception_respects_max_attempts(
+    db: AsyncSession, monkeypatch
+):
     async def fake_execute_delivery_attempt(destination, message):
         raise RuntimeError("Test Failure")
 
@@ -600,9 +605,7 @@ async def test_unexpected_exception_respects_max_attempts(db: AsyncSession, monk
 @pytest.mark.asyncio
 async def test_successful_processing_still_works(db: AsyncSession, monkeypatch):
     async def fake_execute_delivery_attempt(destination, message):
-        return {
-            "success": True,
-            "external_reference": str(12334567)}
+        return {"success": True, "external_reference": str(12334567)}
 
     monkeypatch.setattr(
         "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
@@ -646,7 +649,117 @@ async def test_permanent_failre_still_works(db: AsyncSession, monkeypatch):
         .where(Delivery.id == delivery.id)
     )
 
+    assert delivery is not None
     assert delivery.status == DeliveryStatus.FAILED
     assert delivery.failure_type == FailureType.PERMANENT
     assert delivery.attempts[-1].result == DeliveryAttemptResult.PERMANENT_FAILURE
     assert delivery.next_retry_at is None
+
+
+@pytest.mark.asyncio
+async def test_old_processing_delivery_is_recovered(db: AsyncSession):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+    recovery_amount = await recovery_stale_deliveries(db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.AWAITING_RETRY
+    assert delivery.next_retry_at is not None
+    assert delivery.processing_started_at is None
+    assert recovery_amount == 1
+
+
+@pytest.mark.asyncio
+async def test_recent_processing_delivery_is_untouched(db: AsyncSession):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+
+    recovery_amount = await recovery_stale_deliveries(db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.PROCESSING
+    assert recovery_amount == 0
+
+
+@pytest.mark.asyncio
+async def test_non_processing_deliveries_are_untouched(db: AsyncSession):
+    deliveries = [
+        await create_delivery(db, DeliveryStatus.SUCCEEDED),
+        await create_delivery(db, DeliveryStatus.FAILED),
+        await create_delivery(db, DeliveryStatus.AWAITING_RETRY),
+    ]
+    for delivery in deliveries:
+        delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(
+            minutes=10
+        )
+
+    expected_statuses = {delivery.id: delivery.status for delivery in deliveries}
+    recovery_amount = await recovery_stale_deliveries(db)
+
+    deliveries = await db.scalars(
+        select(Delivery).options(selectinload(Delivery.attempts))
+    )
+    for delivery in deliveries.all():
+        assert delivery is not None
+        assert delivery.status == expected_statuses[delivery.id]
+
+    assert recovery_amount == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_delivery_with_exhausted_attempts_fails(db: AsyncSession):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    delivery.attempt_count = MAX_DELIVERY_ATTEMPTS
+
+    await recovery_stale_deliveries(db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.FAILED
+    assert delivery.failure_type == FailureType.RETRIES_EXHAUSTED
+    assert delivery.next_retry_at is None
+    assert delivery.processing_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_recovered_delivery_can_be_claimed(db: AsyncSession):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+    await recovery_stale_deliveries(db)
+
+    delivery = await db.scalar(
+        select(Delivery)
+        .options(selectinload(Delivery.attempts))
+        .where(Delivery.id == delivery.id)
+    )
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.AWAITING_RETRY
+    assert delivery.next_retry_at is not None
+    assert delivery.processing_started_at is None
+
+    delivery = await claim_next_delivery(db)
+
+    assert delivery is not None
+    assert delivery.status == DeliveryStatus.PROCESSING
+    assert delivery.processing_started_at is not None
