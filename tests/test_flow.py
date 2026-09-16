@@ -661,7 +661,7 @@ async def test_old_processing_delivery_is_recovered(db: AsyncSession):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
     delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
 
-    await recovery_stale_deliveries(db)
+    recovery_amount = await recovery_stale_deliveries(db)
 
     delivery = await db.scalar(
         select(Delivery)
@@ -673,6 +673,7 @@ async def test_old_processing_delivery_is_recovered(db: AsyncSession):
     assert delivery.status == DeliveryStatus.AWAITING_RETRY
     assert delivery.next_retry_at is not None
     assert delivery.processing_started_at is None
+    assert recovery_amount == 1
 
 
 @pytest.mark.asyncio
@@ -680,7 +681,7 @@ async def test_recent_processing_delivery_is_untouched(db: AsyncSession):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
     delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=1)
 
-    await recovery_stale_deliveries(db)
+    recovery_amount = await recovery_stale_deliveries(db)
 
     delivery = await db.scalar(
         select(Delivery)
@@ -690,10 +691,11 @@ async def test_recent_processing_delivery_is_untouched(db: AsyncSession):
 
     assert delivery is not None
     assert delivery.status == DeliveryStatus.PROCESSING
+    assert recovery_amount == 0
 
 
 @pytest.mark.asyncio
-async def test_old_(db: AsyncSession):
+async def test_non_processing_deliveries_are_untouched(db: AsyncSession):
     deliveries = [
         await create_delivery(db, DeliveryStatus.SUCCEEDED),
         await create_delivery(db, DeliveryStatus.FAILED),
@@ -701,23 +703,23 @@ async def test_old_(db: AsyncSession):
     ]
     for delivery in deliveries:
         delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(
-            minutes=1
+            minutes=10
         )
 
-    await recovery_stale_deliveries(db)
+    expected_statuses = {delivery.id: delivery.status for delivery in deliveries}
+    recovery_amount = await recovery_stale_deliveries(db)
 
     deliveries = await db.scalars(
         select(Delivery).options(selectinload(Delivery.attempts))
     )
     for delivery in deliveries.all():
         assert delivery is not None
-        assert delivery.status in [
-            DeliveryStatus.FAILED,
-            DeliveryStatus.SUCCEEDED,
-            DeliveryStatus.AWAITING_RETRY,
-        ]
+        assert delivery.status == expected_statuses[delivery.id]
+
+    assert recovery_amount == 0
 
 
+@pytest.mark.asyncio
 async def test_stale_delivery_with_exhausted_attempts_fails(db: AsyncSession):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
     delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
@@ -738,6 +740,7 @@ async def test_stale_delivery_with_exhausted_attempts_fails(db: AsyncSession):
     assert delivery.processing_started_at is None
 
 
+@pytest.mark.asyncio
 async def test_recovered_delivery_can_be_claimed(db: AsyncSession):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
     delivery.processing_started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
