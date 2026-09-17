@@ -6,8 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import DeliveryStatus, DeliveryAttemptResult, DeliveryTrigger, FailureType, \
-    Delivery
+from app.database.models import (
+    Delivery,
+    DeliveryAttemptResult,
+    DeliveryStatus,
+    DeliveryTrigger,
+    FailureType,
+)
 from app.database.session import get_db
 
 
@@ -46,8 +51,8 @@ router = APIRouter(prefix="/api/deliveries", tags=["deliveries"])
 
 @router.get("/{delivery_id}", response_model=DeliveryDetailRead)
 async def get_detailed_delivery(
-        delivery_id: int,
-        db: AsyncSession = Depends(get_db),
+    delivery_id: int,
+    db: AsyncSession = Depends(get_db),
 ):
     res = await db.scalar(
         select(Delivery)

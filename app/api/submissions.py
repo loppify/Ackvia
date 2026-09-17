@@ -31,18 +31,20 @@ class SubmissionRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 router = APIRouter(prefix="/api/submissions", tags=["submissions"])
 
 
 @router.get("/{sub_id}", response_model=SubmissionRead)
 async def get_detailed_submission(
-        sub_id: int,
-        db: AsyncSession = Depends(get_db),
+    sub_id: int,
+    db: AsyncSession = Depends(get_db),
 ):
     res = await db.scalar(
         select(Submission)
         .options(selectinload(Submission.deliveries))
-        .where(Submission.id == sub_id))
+        .where(Submission.id == sub_id)
+    )
 
     if res is None:
         raise HTTPException(

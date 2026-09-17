@@ -149,7 +149,10 @@ class Delivery(Base):
         lazy="selectin", back_populates="deliveries"
     )
     attempts: Mapped[list["DeliveryAttempt"]] = relationship(
-        back_populates="delivery", cascade="all, delete-orphan", lazy="selectin", order_by="DeliveryAttempt.created_at"
+        back_populates="delivery",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="DeliveryAttempt.created_at",
     )
 
 
