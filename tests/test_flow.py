@@ -23,7 +23,7 @@ from app.database.models import (
     Destination,
     FailureType,
     Form,
-    Submission,
+    Submission, DeliveryTrigger,
 )
 from app.database.session import get_db
 from app.main import app
@@ -58,6 +58,16 @@ TestSessionLocal = async_sessionmaker(
 # Fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+async def client():
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+    ) as client:
+        yield client
+
 
 @pytest.fixture(autouse=True)
 async def prepare_database():
@@ -90,8 +100,8 @@ async def db():
 
 
 async def create_delivery(
-    db: AsyncSession,
-    status: DeliveryStatus = DeliveryStatus.PENDING,
+        db: AsyncSession,
+        status: DeliveryStatus = DeliveryStatus.PENDING,
 ) -> Delivery:
     form = Form(
         title="Test form",
@@ -130,20 +140,14 @@ async def create_delivery(
 
 
 @pytest.mark.asyncio
-async def test_invalid_form_uuid():
-    transport = ASGITransport(app=app)
+async def test_invalid_form_uuid(client: AsyncClient):
+    random_id = uuid.uuid4()
 
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-    ) as client:
-        random_id = uuid.uuid4()
-
-        response = await client.post(
-            f"/f/{random_id}",
-            json={"dummy": "data"},
-            headers={"Accept": "application/json"},
-        )
+    response = await client.post(
+        f"/f/{random_id}",
+        json={"dummy": "data"},
+        headers={"Accept": "application/json"},
+    )
 
     assert response.status_code == 404
 
@@ -197,7 +201,7 @@ async def test_delivery_creation(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_new_delivery_starts_pending_without_attempts(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -281,7 +285,7 @@ async def test_duplicate_delivery_failure(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_delivery_states_are_independent(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -362,8 +366,8 @@ async def test_delivery_states_are_independent(
     ],
 )
 async def test_delivery_status_is_persisted(
-    db: AsyncSession,
-    status: DeliveryStatus,
+        db: AsyncSession,
+        status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -383,7 +387,7 @@ async def test_delivery_status_is_persisted(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_can_be_selected_when_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -408,7 +412,7 @@ async def test_awaiting_retry_delivery_can_be_selected_when_due(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_is_not_selected_before_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -433,7 +437,7 @@ async def test_awaiting_retry_delivery_is_not_selected_before_due(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_schedules_retry(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -475,7 +479,7 @@ async def test_retryable_failure_schedules_retry(
 
 @pytest.mark.asyncio
 async def test_retry_delay_increases_with_attempt_count(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -513,7 +517,7 @@ async def test_retry_delay_increases_with_attempt_count(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_exhausts_retries(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -576,7 +580,7 @@ async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatc
 
 @pytest.mark.asyncio
 async def test_unexpected_exception_respects_max_attempts(
-    db: AsyncSession, monkeypatch
+        db: AsyncSession, monkeypatch
 ):
     async def fake_execute_delivery_attempt(destination, message):
         raise RuntimeError("Test Failure")
@@ -763,3 +767,457 @@ async def test_recovered_delivery_can_be_claimed(db: AsyncSession):
     assert delivery is not None
     assert delivery.status == DeliveryStatus.PROCESSING
     assert delivery.processing_started_at is not None
+
+
+@pytest.mark.asyncio
+async def test_get_form_submissions_returns_only_its_submissions(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    form = Form(title="Test form")
+
+    submission_1 = Submission(
+        form=form,
+        payload={"name": "Ivan"},
+    )
+    submission_2 = Submission(
+        form=form,
+        payload={"name": "Petro"},
+    )
+
+    db.add(form)
+    await db.commit()
+
+    response = await client.get(f"/api/forms/{form.id}/submissions")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+    assert {item["id"] for item in data} == {
+        submission_1.id,
+        submission_2.id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_form_submissions_does_not_return_other_form_submissions(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    form_1 = Form(title="Form 1")
+    form_2 = Form(title="Form 2")
+
+    submission_1 = Submission(
+        form=form_1,
+        payload={"name": "Ivan"},
+    )
+    submission_2 = Submission(
+        form=form_2,
+        payload={"name": "Petro"},
+    )
+
+    db.add_all([form_1, form_2])
+    await db.commit()
+
+    response = await client.get(f"/api/forms/{form_1.id}/submissions")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 1
+    assert data[0]["id"] == submission_1.id
+    assert data[0]["id"] != submission_2.id
+
+
+@pytest.mark.asyncio
+async def test_get_form_submissions_are_ordered_newest_first(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    form = Form(title="Test form")
+
+    old_submission = Submission(
+        form=form,
+        payload={"name": "Old"},
+        created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+    )
+    new_submission = Submission(
+        form=form,
+        payload={"name": "New"},
+        created_at=datetime.now(timezone.utc),
+    )
+
+    db.add(form)
+    await db.commit()
+
+    response = await client.get(f"/api/forms/{form.id}/submissions")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+    assert data[0]["id"] == new_submission.id
+    assert data[1]["id"] == old_submission.id
+
+
+@pytest.mark.asyncio
+async def test_get_form_submissions_respects_limit(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    form = Form(title="Test form")
+
+    for i in range(5):
+        Submission(
+            form=form,
+            payload={"number": i},
+        )
+
+    db.add(form)
+    await db.commit()
+
+    response = await client.get(
+        f"/api/forms/{form.id}/submissions",
+        params={"limit": 2},
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_form_submissions_respects_offset(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    form = Form(title="Test form")
+
+    now = datetime.now(timezone.utc)
+
+    submissions = [
+        Submission(
+            form=form,
+            payload={"number": i},
+            created_at=now + timedelta(seconds=i),
+        )
+        for i in range(5)
+    ]
+
+    db.add(form)
+    await db.commit()
+
+    response = await client.get(
+        f"/api/forms/{form.id}/submissions",
+        params={
+            "limit": 2,
+            "offset": 2,
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+    assert data[0]["id"] == submissions[2].id
+    assert data[1]["id"] == submissions[1].id
+
+
+@pytest.mark.asyncio
+async def test_get_form_submissions_returns_404_for_unknown_form(
+        client: AsyncClient,
+):
+    form_id = uuid.uuid4()
+
+    response = await client.get(f"/api/forms/{form_id}/submissions")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_submission_returns_submission_with_payload(db: AsyncSession, client: AsyncClient, ):
+    delivery = await create_delivery(db, DeliveryStatus.PENDING)
+    submission = delivery.submission
+
+    response = await client.get(f"/api/submissions/{submission.id}")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == submission.id
+    assert data["payload"] == {"email": "test@example.com"}
+    assert "created_at" in data
+
+
+@pytest.mark.asyncio
+async def test_get_submission_returns_deliveries(db: AsyncSession, client: AsyncClient, ):
+    delivery = await create_delivery(db, DeliveryStatus.PENDING)
+    submission = delivery.submission
+
+    response = await client.get(f"/api/submissions/{submission.id}")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data["deliveries"]) == 1
+
+    stored_delivery = data["deliveries"][0]
+
+    assert stored_delivery["id"] == delivery.id
+    assert stored_delivery["destination_id"] == delivery.destination_id
+    assert stored_delivery["status"] == DeliveryStatus.PENDING.value
+    assert stored_delivery["attempt_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_submission_returns_delivery_state(db: AsyncSession, client: AsyncClient, ):
+    delivery = await create_delivery(db, DeliveryStatus.AWAITING_RETRY)
+
+    delivery.attempt_count = 2
+    delivery.last_error = "Telegram unavailable"
+    delivery.next_retry_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+
+    await db.commit()
+
+    response = await client.get(
+        f"/api/submissions/{delivery.submission_id}"
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+    stored_delivery = data["deliveries"][0]
+
+    assert stored_delivery["status"] == DeliveryStatus.AWAITING_RETRY.value
+    assert stored_delivery["attempt_count"] == 2
+    assert stored_delivery["last_error"] == "Telegram unavailable"
+    assert stored_delivery["next_retry_at"] is not None
+    assert stored_delivery["delivered_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_submission_not_found(client: AsyncClient, ):
+    response = await client.get("/api/submissions/999999")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_submission_invalid_id(client: AsyncClient, ):
+    response = await client.get("/api/submissions/not-an-id")
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_get_forms_returns_forms(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    form_1 = Form(title="Form 1")
+    form_2 = Form(title="Form 2")
+
+    db.add_all([form_1, form_2])
+    await db.commit()
+
+    response = await client.get("/api/forms")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+    assert {item["id"] for item in data} == {
+        str(form_1.id),
+        str(form_2.id),
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_forms_are_ordered_newest_first(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    now = datetime.now(timezone.utc)
+
+    old_form = Form(
+        title="Old form",
+        created_at=now - timedelta(hours=1),
+    )
+    new_form = Form(
+        title="New form",
+        created_at=now,
+    )
+
+    db.add_all([old_form, new_form])
+    await db.commit()
+
+    response = await client.get("/api/forms")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+    assert data[0]["id"] == str(new_form.id)
+    assert data[1]["id"] == str(old_form.id)
+
+
+@pytest.mark.asyncio
+async def test_get_forms_respects_limit_and_offset(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    now = datetime.now(timezone.utc)
+
+    forms = [
+        Form(
+            title=f"Form {i}",
+            created_at=now + timedelta(seconds=i),
+        )
+        for i in range(5)
+    ]
+
+    db.add_all(forms)
+    await db.commit()
+
+    response = await client.get(
+        "/api/forms",
+        params={
+            "limit": 2,
+            "offset": 1,
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+    assert data[0]["id"] == str(forms[3].id)
+    assert data[1]["id"] == str(forms[2].id)
+
+
+@pytest.mark.asyncio
+async def test_get_forms_returns_empty_list_when_no_forms_exist(
+        client: AsyncClient,
+):
+    response = await client.get("/api/forms")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_get_delivery_returns_delivery(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    delivery = await create_delivery(db, DeliveryStatus.PENDING)
+
+    response = await client.get(f"/api/deliveries/{delivery.id}")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == delivery.id
+    assert data["submission_id"] == delivery.submission_id
+    assert data["destination_id"] == delivery.destination_id
+    assert data["status"] == DeliveryStatus.PENDING.value
+    assert data["attempt_count"] == 0
+    assert data["attempts"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_delivery_returns_attempts(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+
+    attempt = DeliveryAttempt(
+        delivery=delivery,
+        result=DeliveryAttemptResult.RETRYABLE_FAILURE,
+        error="Telegram unavailable",
+        trigger=DeliveryTrigger.AUTOMATIC,
+        finished_at=datetime.now(timezone.utc),
+    )
+
+    delivery.attempt_count = 1
+
+    db.add(attempt)
+    await db.commit()
+
+    response = await client.get(f"/api/deliveries/{delivery.id}")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["attempt_count"] == 1
+    assert len(data["attempts"]) == 1
+
+    stored_attempt = data["attempts"][0]
+
+    assert stored_attempt["id"] == attempt.id
+    assert (
+            stored_attempt["result"]
+            == DeliveryAttemptResult.RETRYABLE_FAILURE.value
+    )
+    assert stored_attempt["error"] == "Telegram unavailable"
+    assert stored_attempt["trigger"] == DeliveryTrigger.AUTOMATIC.value
+    assert stored_attempt["finished_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_delivery_returns_attempts_in_chronological_order(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+
+    now = datetime.now(timezone.utc)
+
+    first_attempt = DeliveryAttempt(
+        delivery=delivery,
+        trigger=DeliveryTrigger.AUTOMATIC,
+        created_at=now - timedelta(minutes=2),
+    )
+
+    second_attempt = DeliveryAttempt(
+        delivery=delivery,
+        trigger=DeliveryTrigger.RETRY,
+        created_at=now - timedelta(minutes=1),
+    )
+
+    db.add_all([first_attempt, second_attempt])
+    await db.commit()
+
+    response = await client.get(f"/api/deliveries/{delivery.id}")
+
+    assert response.status_code == 200
+
+    attempts = response.json()["attempts"]
+
+    assert len(attempts) == 2
+    assert attempts[0]["id"] == first_attempt.id
+    assert attempts[1]["id"] == second_attempt.id
+
+
+@pytest.mark.asyncio
+async def test_get_delivery_returns_404_when_not_found(
+        client: AsyncClient,
+):
+    response = await client.get("/api/deliveries/999999")
+
+    assert response.status_code == 404
