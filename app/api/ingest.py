@@ -4,40 +4,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.database.models import Delivery, DeliveryStatus, Form, Submission
+from app.database.queries.forms import get_form_with_destination
+from app.database.queries.submissions import create_submission
 from app.database.session import get_db
 
 router = APIRouter()
-
-
-async def create_submission(db: AsyncSession, form: Form, payload: dict):
-    submission = Submission(form_id=form.id, payload=payload)
-    db.add(submission)
-    await db.flush()
-
-    for destination in form.destinations:
-        db.add(
-            Delivery(
-                submission_id=submission.id,
-                destination_id=destination.id,
-                status=DeliveryStatus.PENDING,
-            )
-        )
-    await db.commit()
-    await db.refresh(submission)
-    return submission
-
-
-async def get_form_with_destionation(db: AsyncSession, form_id: uuid.UUID):
-    result = await db.execute(
-        select(Form).where(Form.id == form_id).options(selectinload(Form.destinations))
-    )
-    form_obj = result.scalar_one_or_none()
-    return form_obj
 
 
 async def parse_submission_request(request: Request):
@@ -69,7 +42,7 @@ async def parse_submission_request(request: Request):
 async def handle_form_submission(
     form_id: uuid.UUID, request: Request, db: Annotated[AsyncSession, Depends(get_db)]
 ):
-    form_obj = await get_form_with_destionation(db, form_id)
+    form_obj = await get_form_with_destination(db, form_id)
 
     if form_obj is None:
         raise HTTPException(
