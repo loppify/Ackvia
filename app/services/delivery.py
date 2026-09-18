@@ -64,7 +64,7 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
 
 
 async def get_delivery_for_processing(
-        db: AsyncSession, delivery_id: int
+    db: AsyncSession, delivery_id: int
 ) -> Delivery | None:
     result = await db.execute(
         select(Delivery)
@@ -95,7 +95,7 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 
 
 async def finish_delivery_attempt(
-        db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
+    db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
     log = logger.bind(
         delivery_id=delivery.id,
@@ -282,11 +282,12 @@ async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
             raise
         raise
 
-class DeliveryNotFoundError(Exception):
-    ...
 
-class DeliveryNotReplayableError(Exception):
-    ...
+class DeliveryNotFoundError(Exception): ...
+
+
+class DeliveryNotReplayableError(Exception): ...
+
 
 async def manual_delivery(delivery_id, db: AsyncSession):
     delivery = await db.get(Delivery, delivery_id)
@@ -294,8 +295,8 @@ async def manual_delivery(delivery_id, db: AsyncSession):
     if delivery is None:
         raise DeliveryNotFoundError
     if delivery.status not in (
-            DeliveryStatus.FAILED,
-            DeliveryStatus.UNKNOWN,
+        DeliveryStatus.FAILED,
+        DeliveryStatus.UNKNOWN,
     ):
         raise DeliveryNotReplayableError
 
