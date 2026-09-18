@@ -1,3 +1,4 @@
+import random
 from datetime import datetime, timedelta, timezone
 from operator import and_
 
@@ -16,12 +17,14 @@ from app.database.models import (
     Destination,
     FailureType,
     Form,
-    Submission,
+    Submission, DeliveryTrigger,
 )
 from app.services.telegram import format_submission_message, send_telegram_alert
 
 MAX_DELIVERY_ATTEMPTS = 5
 RETRY_BASE_DELAY_SECONDS = 30
+RETRY_JITTER_MIN = 0.8
+RETRY_JITTER_MAX = 1.2
 
 
 async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
@@ -60,7 +63,7 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
 
 
 async def get_delivery_for_processing(
-    db: AsyncSession, delivery_id: int
+        db: AsyncSession, delivery_id: int
 ) -> Delivery | None:
     result = await db.execute(
         select(Delivery)
@@ -73,8 +76,8 @@ async def get_delivery_for_processing(
     return result.scalar_one_or_none()
 
 
-async def start_attempt(db: AsyncSession, delivery: Delivery):
-    delivery_attempt = DeliveryAttempt(delivery=delivery)
+async def start_attempt(db: AsyncSession, delivery: Delivery, trigger: DeliveryTrigger):
+    delivery_attempt = DeliveryAttempt(delivery=delivery, trigger=trigger)
     delivery.attempt_count += 1
     db.add(delivery_attempt)
     await db.commit()
@@ -89,7 +92,7 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 
 
 async def finish_delivery_attempt(
-    db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
+        db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
     log = logger.bind(
         delivery_id=delivery.id,
@@ -134,7 +137,7 @@ async def finish_delivery_attempt(
                 delivery.status = DeliveryStatus.AWAITING_RETRY
                 delivery.next_retry_at = now + timedelta(
                     seconds=(
-                        RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))
+                            RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))
                     )
                 )
                 log.bind(
@@ -174,7 +177,16 @@ def build_submission_message(form: Form, payload: dict) -> str:
     return format_submission_message(form.title, payload, t=t)
 
 
-async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
+def calculate_retry_delay(attempt_count: int) -> float:
+    base_delay = RETRY_BASE_DELAY_SECONDS * (2 ** (attempt_count - 1))
+    return base_delay * random.uniform(
+        RETRY_JITTER_MIN,
+        RETRY_JITTER_MAX,
+    )
+
+
+async def process_delivery(delivery_id: int, db: AsyncSession,
+                           trigger: DeliveryTrigger) -> None:
     log = logger.bind(delivery_id=delivery_id)
     delivery = None
     attempt = None
@@ -192,7 +204,7 @@ async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
             )
             return
 
-        attempt = await start_attempt(db, delivery)
+        attempt = await start_attempt(db, delivery, trigger)
 
         message = build_submission_message(
             delivery.submission.form,
@@ -243,9 +255,8 @@ async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
         if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
             delivery.status = DeliveryStatus.AWAITING_RETRY
             delivery.failure_type = None
-            delivery.next_retry_at = now + timedelta(
-                seconds=RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))
-            )
+            delay = calculate_retry_delay(delivery.attempt_count)
+            delivery.next_retry_at = now + timedelta(seconds=delay)
             log.bind(
                 attempt_count=delivery.attempt_count,
                 next_retry_at=delivery.next_retry_at,

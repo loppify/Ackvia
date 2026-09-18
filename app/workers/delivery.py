@@ -26,7 +26,7 @@ async def run_delivery_worker() -> None:
         try:
             now = datetime.now(timezone.utc)
             if last_recovery_at is None or now - last_recovery_at >= timedelta(
-                seconds=RECOVERY_INTERVAL_SECONDS
+                    seconds=RECOVERY_INTERVAL_SECONDS
             ):
                 async with async_session_maker() as db:
                     recovered = await recovery_stale_deliveries(db)
@@ -41,8 +41,9 @@ async def run_delivery_worker() -> None:
                 logger.debug("No deliveries available")
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
+            delivery, trigger = delivery
             async with async_session_maker() as db:
-                await process_delivery(delivery_id=delivery.id, db=db)
+                await process_delivery(delivery_id=delivery.id, db=db, trigger=trigger)
 
         except Exception:
             logger.exception("Delivery worker iteration failed")
