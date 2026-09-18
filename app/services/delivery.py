@@ -14,10 +14,11 @@ from app.database.models import (
     DeliveryAttempt,
     DeliveryAttemptResult,
     DeliveryStatus,
+    DeliveryTrigger,
     Destination,
     FailureType,
     Form,
-    Submission, DeliveryTrigger,
+    Submission,
 )
 from app.services.telegram import format_submission_message, send_telegram_alert
 
@@ -76,8 +77,10 @@ async def get_delivery_for_processing(
     return result.scalar_one_or_none()
 
 
-async def start_attempt(db: AsyncSession, delivery: Delivery, trigger: DeliveryTrigger):
-    delivery_attempt = DeliveryAttempt(delivery=delivery, trigger=trigger)
+async def start_attempt(db: AsyncSession, delivery: Delivery):
+    delivery_attempt = DeliveryAttempt(
+        delivery=delivery, trigger=delivery.queued_trigger
+    )
     delivery.attempt_count += 1
     db.add(delivery_attempt)
     await db.commit()
@@ -135,11 +138,11 @@ async def finish_delivery_attempt(
 
             if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
                 delivery.status = DeliveryStatus.AWAITING_RETRY
+                delivery.queued_trigger = DeliveryTrigger.RETRY
                 delivery.next_retry_at = now + timedelta(
-                    seconds=(
-                            RETRY_BASE_DELAY_SECONDS * (2 ** (delivery.attempt_count - 1))
-                    )
+                    seconds=calculate_retry_delay(delivery.attempt_count)
                 )
+
                 log.bind(
                     error=delivery_attempt.error, next_retry_at=delivery.next_retry_at
                 ).warning("Delivery retry scheduled.")
@@ -185,8 +188,7 @@ def calculate_retry_delay(attempt_count: int) -> float:
     )
 
 
-async def process_delivery(delivery_id: int, db: AsyncSession,
-                           trigger: DeliveryTrigger) -> None:
+async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
     log = logger.bind(delivery_id=delivery_id)
     delivery = None
     attempt = None
@@ -204,7 +206,7 @@ async def process_delivery(delivery_id: int, db: AsyncSession,
             )
             return
 
-        attempt = await start_attempt(db, delivery, trigger)
+        attempt = await start_attempt(db, delivery)
 
         message = build_submission_message(
             delivery.submission.form,
@@ -254,6 +256,7 @@ async def process_delivery(delivery_id: int, db: AsyncSession,
 
         if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
             delivery.status = DeliveryStatus.AWAITING_RETRY
+            delivery.queued_trigger = DeliveryTrigger.RETRY
             delivery.failure_type = None
             delay = calculate_retry_delay(delivery.attempt_count)
             delivery.next_retry_at = now + timedelta(seconds=delay)
@@ -278,3 +281,29 @@ async def process_delivery(delivery_id: int, db: AsyncSession,
             log.exception("Failed to persist delivery recovery")
             raise
         raise
+
+class DeliveryNotFoundError(Exception):
+    ...
+
+class DeliveryNotReplayableError(Exception):
+    ...
+
+async def manual_delivery(delivery_id, db: AsyncSession):
+    delivery = await db.get(Delivery, delivery_id)
+
+    if delivery is None:
+        raise DeliveryNotFoundError
+    if delivery.status not in (
+            DeliveryStatus.FAILED,
+            DeliveryStatus.UNKNOWN,
+    ):
+        raise DeliveryNotReplayableError
+
+    delivery.status = DeliveryStatus.PENDING
+    delivery.queued_trigger = DeliveryTrigger.MANUAL_REPLAY
+    delivery.failure_type = None
+    delivery.next_retry_at = None
+    delivery.processing_started_at = None
+    await db.commit()
+    await db.refresh(delivery)
+    return delivery

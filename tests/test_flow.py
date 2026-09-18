@@ -32,7 +32,7 @@ from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
     claim_next_delivery,
     finish_delivery_attempt,
-    process_delivery,
+    process_delivery, manual_delivery, DeliveryNotFoundError, DeliveryNotReplayableError,
 )
 from app.workers.delivery import recovery_stale_deliveries
 
@@ -65,8 +65,8 @@ async def client():
     transport = ASGITransport(app=app)
 
     async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
+            transport=transport,
+            base_url="http://test",
     ) as client:
         yield client
 
@@ -102,8 +102,8 @@ async def db():
 
 
 async def create_delivery(
-    db: AsyncSession,
-    status: DeliveryStatus = DeliveryStatus.PENDING,
+        db: AsyncSession,
+        status: DeliveryStatus = DeliveryStatus.PENDING,
 ) -> Delivery:
     form = Form(
         title="Test form",
@@ -128,6 +128,7 @@ async def create_delivery(
         failure_type=(
             FailureType.PERMANENT if status == DeliveryStatus.FAILED else None
         ),
+        queued_trigger=DeliveryTrigger.AUTOMATIC,
     )
 
     db.add(form)
@@ -203,7 +204,7 @@ async def test_delivery_creation(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_new_delivery_starts_pending_without_attempts(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -287,7 +288,7 @@ async def test_duplicate_delivery_failure(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_delivery_states_are_independent(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     form = Form(
         title="Landing Test",
@@ -368,8 +369,8 @@ async def test_delivery_states_are_independent(
     ],
 )
 async def test_delivery_status_is_persisted(
-    db: AsyncSession,
-    status: DeliveryStatus,
+        db: AsyncSession,
+        status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -389,7 +390,7 @@ async def test_delivery_status_is_persisted(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_can_be_selected_when_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -414,7 +415,7 @@ async def test_awaiting_retry_delivery_can_be_selected_when_due(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_is_not_selected_before_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -439,7 +440,7 @@ async def test_awaiting_retry_delivery_is_not_selected_before_due(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_schedules_retry(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -448,7 +449,7 @@ async def test_retryable_failure_schedules_retry(
     delivery.attempt_count = 1
     delivery.processing_started_at = datetime.now(timezone.utc)
 
-    attempt = DeliveryAttempt(delivery=delivery)
+    attempt = DeliveryAttempt(delivery=delivery, trigger=delivery.queued_trigger)
     db.add(attempt)
     await db.commit()
 
@@ -474,14 +475,14 @@ async def test_retryable_failure_schedules_retry(
     assert attempt.error == "Telegram temporarily unavailable"
     assert attempt.finished_at is not None
     assert delivery.next_retry_at is not None
-    assert before + timedelta(seconds=30) <= delivery.next_retry_at
-    assert delivery.next_retry_at <= after + timedelta(seconds=30)
+    assert before + timedelta(seconds=24) <= delivery.next_retry_at
+    assert delivery.next_retry_at <= after + timedelta(seconds=36)
     assert delivery.processing_started_at is None
 
 
 @pytest.mark.asyncio
 async def test_retry_delay_increases_with_attempt_count(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -489,11 +490,11 @@ async def test_retry_delay_increases_with_attempt_count(
     )
     delivery.attempt_count = 3
 
-    attempt = DeliveryAttempt(delivery=delivery)
+    attempt = DeliveryAttempt(delivery=delivery, trigger=delivery.queued_trigger)
     db.add(attempt)
     await db.commit()
 
-    before = datetime.now(timezone.utc)
+    datetime.now(timezone.utc)
 
     await finish_delivery_attempt(
         db,
@@ -508,18 +509,16 @@ async def test_retry_delay_increases_with_attempt_count(
 
     after = datetime.now(timezone.utc)
 
-    expected_delay = timedelta(seconds=120)
-
     assert delivery.status == DeliveryStatus.AWAITING_RETRY
     assert delivery.next_retry_at is not None
 
-    assert before + expected_delay <= delivery.next_retry_at
-    assert delivery.next_retry_at <= after + expected_delay
+    assert after + timedelta(seconds=96) <= delivery.next_retry_at
+    assert delivery.next_retry_at <= after + timedelta(seconds=144)
 
 
 @pytest.mark.asyncio
 async def test_retryable_failure_exhausts_retries(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -528,7 +527,7 @@ async def test_retryable_failure_exhausts_retries(
     delivery.attempt_count = 5
     delivery.next_retry_at = datetime.now(timezone.utc)
 
-    attempt = DeliveryAttempt(delivery=delivery)
+    attempt = DeliveryAttempt(delivery=delivery, trigger=delivery.queued_trigger)
     db.add(attempt)
     await db.commit()
 
@@ -582,7 +581,7 @@ async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatc
 
 @pytest.mark.asyncio
 async def test_unexpected_exception_respects_max_attempts(
-    db: AsyncSession, monkeypatch
+        db: AsyncSession, monkeypatch
 ):
     async def fake_execute_delivery_attempt(destination, message):
         raise RuntimeError("Test Failure")
@@ -773,8 +772,8 @@ async def test_recovered_delivery_can_be_claimed(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_returns_only_its_submissions(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     form = Form(title="Test form")
 
@@ -805,8 +804,8 @@ async def test_get_form_submissions_returns_only_its_submissions(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_does_not_return_other_form_submissions(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     form_1 = Form(title="Form 1")
     form_2 = Form(title="Form 2")
@@ -836,8 +835,8 @@ async def test_get_form_submissions_does_not_return_other_form_submissions(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_are_ordered_newest_first(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     form = Form(title="Test form")
 
@@ -868,8 +867,8 @@ async def test_get_form_submissions_are_ordered_newest_first(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_respects_limit(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     form = Form(title="Test form")
 
@@ -896,8 +895,8 @@ async def test_get_form_submissions_respects_limit(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_respects_offset(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     form = Form(title="Test form")
 
@@ -934,7 +933,7 @@ async def test_get_form_submissions_respects_offset(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_returns_404_for_unknown_form(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     form_id = uuid.uuid4()
 
@@ -945,8 +944,8 @@ async def test_get_form_submissions_returns_404_for_unknown_form(
 
 @pytest.mark.asyncio
 async def test_get_submission_returns_submission_with_payload(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PENDING)
     submission = delivery.submission
@@ -964,8 +963,8 @@ async def test_get_submission_returns_submission_with_payload(
 
 @pytest.mark.asyncio
 async def test_get_submission_returns_deliveries(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PENDING)
     submission = delivery.submission
@@ -988,8 +987,8 @@ async def test_get_submission_returns_deliveries(
 
 @pytest.mark.asyncio
 async def test_get_submission_returns_delivery_state(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.AWAITING_RETRY)
 
@@ -1015,7 +1014,7 @@ async def test_get_submission_returns_delivery_state(
 
 @pytest.mark.asyncio
 async def test_get_submission_not_found(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     response = await client.get("/api/submissions/999999")
 
@@ -1024,7 +1023,7 @@ async def test_get_submission_not_found(
 
 @pytest.mark.asyncio
 async def test_get_submission_invalid_id(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     response = await client.get("/api/submissions/not-an-id")
 
@@ -1033,8 +1032,8 @@ async def test_get_submission_invalid_id(
 
 @pytest.mark.asyncio
 async def test_get_forms_returns_forms(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     form_1 = Form(title="Form 1")
     form_2 = Form(title="Form 2")
@@ -1057,8 +1056,8 @@ async def test_get_forms_returns_forms(
 
 @pytest.mark.asyncio
 async def test_get_forms_are_ordered_newest_first(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     now = datetime.now(timezone.utc)
 
@@ -1087,8 +1086,8 @@ async def test_get_forms_are_ordered_newest_first(
 
 @pytest.mark.asyncio
 async def test_get_forms_respects_limit_and_offset(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     now = datetime.now(timezone.utc)
 
@@ -1122,7 +1121,7 @@ async def test_get_forms_respects_limit_and_offset(
 
 @pytest.mark.asyncio
 async def test_get_forms_returns_empty_list_when_no_forms_exist(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     response = await client.get("/api/forms")
 
@@ -1132,8 +1131,8 @@ async def test_get_forms_returns_empty_list_when_no_forms_exist(
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_delivery(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PENDING)
 
@@ -1153,8 +1152,8 @@ async def test_get_delivery_returns_delivery(
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_attempts(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
 
@@ -1191,8 +1190,8 @@ async def test_get_delivery_returns_attempts(
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_attempts_in_chronological_order(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
 
@@ -1226,8 +1225,238 @@ async def test_get_delivery_returns_attempts_in_chronological_order(
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_404_when_not_found(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     response = await client.get("/api/deliveries/999999")
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_can_be_queued_for_manual_replay(
+        db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.FAILED,
+    )
+    delivery.attempt_count = 5
+    delivery.next_retry_at = datetime.now(timezone.utc)
+    delivery.processing_started_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    result = await manual_delivery(delivery.id, db)
+
+    assert result is not None
+    assert result.status == DeliveryStatus.PENDING
+    assert result.queued_trigger == DeliveryTrigger.MANUAL_REPLAY
+    assert result.failure_type is None
+    assert result.next_retry_at is None
+    assert result.processing_started_at is None
+    assert result.attempt_count == 5
+
+
+@pytest.mark.asyncio
+async def test_unknown_delivery_can_be_queued_for_manual_replay(
+        db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.UNKNOWN,
+    )
+
+    result = await manual_delivery(delivery.id, db)
+
+    assert result is not None
+    assert result.status == DeliveryStatus.PENDING
+    assert result.queued_trigger == DeliveryTrigger.MANUAL_REPLAY
+    assert result.failure_type is None
+
+@pytest.mark.asyncio
+async def test_manual_replay_raises_not_found_for_missing_delivery(
+        db: AsyncSession,
+):
+    with pytest.raises(DeliveryNotFoundError):
+        await manual_delivery(999999, db)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        DeliveryStatus.PENDING,
+        DeliveryStatus.PROCESSING,
+        DeliveryStatus.AWAITING_RETRY,
+        DeliveryStatus.SUCCEEDED,
+    ],
+)
+async def test_manual_replay_raises_not_replayable_for_invalid_status(
+        db: AsyncSession,
+        status: DeliveryStatus,
+):
+    delivery = await create_delivery(
+        db,
+        status=status,
+    )
+
+    with pytest.raises(DeliveryNotReplayableError):
+        await manual_delivery(delivery.id, db)
+
+    await db.refresh(delivery)
+
+    assert delivery.status == status
+
+
+@pytest.mark.asyncio
+async def test_manual_replay_not_replayable_preserves_delivery(
+        db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.SUCCEEDED,
+    )
+
+    original_attempt_count = delivery.attempt_count
+    original_trigger = delivery.queued_trigger
+
+    with pytest.raises(DeliveryNotReplayableError):
+        await manual_delivery(delivery.id, db)
+
+    await db.refresh(delivery)
+
+    assert delivery.status == DeliveryStatus.SUCCEEDED
+    assert delivery.attempt_count == original_attempt_count
+    assert delivery.queued_trigger == original_trigger
+
+@pytest.mark.asyncio
+async def test_replay_failed_delivery(client, db: AsyncSession):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.FAILED,
+    )
+
+    response = await client.post(f"/api/deliveries/{delivery.id}/replay")
+
+    assert response.status_code == 202
+
+    data = response.json()
+    assert data["id"] == delivery.id
+    assert data["status"] == DeliveryStatus.PENDING.value
+
+    await db.refresh(delivery)
+
+    assert delivery.status == DeliveryStatus.PENDING
+    assert delivery.queued_trigger == DeliveryTrigger.MANUAL_REPLAY
+    assert delivery.failure_type is None
+    assert delivery.next_retry_at is None
+    assert delivery.processing_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_replay_unknown_delivery(client, db: AsyncSession):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.UNKNOWN,
+    )
+
+    response = await client.post(f"/api/deliveries/{delivery.id}/replay")
+
+    assert response.status_code == 202
+
+    await db.refresh(delivery)
+
+    assert delivery.status == DeliveryStatus.PENDING
+    assert delivery.queued_trigger == DeliveryTrigger.MANUAL_REPLAY
+
+
+@pytest.mark.asyncio
+async def test_replay_missing_delivery_returns_404(client):
+    response = await client.post("/api/deliveries/999999/replay")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Delivery not found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        DeliveryStatus.SUCCEEDED,
+        DeliveryStatus.PENDING,
+        DeliveryStatus.AWAITING_RETRY,
+        DeliveryStatus.PROCESSING,
+    ],
+)
+async def test_replay_non_replayable_delivery_returns_409(
+    client,
+    db: AsyncSession,
+    status: DeliveryStatus,
+):
+    delivery = await create_delivery(
+        db,
+        status=status,
+    )
+
+    response = await client.post(f"/api/deliveries/{delivery.id}/replay")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Delivery is not replayable"
+
+    await db.refresh(delivery)
+
+    assert delivery.status == status
+
+@pytest.mark.asyncio
+async def test_manual_replay_is_recorded_in_attempt_history(
+    client,
+    db: AsyncSession,
+    monkeypatch,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.FAILED,
+    )
+
+    response = await client.post(f"/api/deliveries/{delivery.id}/replay")
+
+    assert response.status_code == 202
+
+    db.expire_all()
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+    assert claimed.id == delivery.id
+    assert claimed.status == DeliveryStatus.PROCESSING
+    assert claimed.queued_trigger == DeliveryTrigger.MANUAL_REPLAY
+
+    async def fake_execute_delivery_attempt(destination, message):
+        return {
+            "success": True,
+            "external_reference": "manual-replay-test",
+        }
+
+    monkeypatch.setattr(
+        "app.services.delivery.execute_delivery_attempt",
+        fake_execute_delivery_attempt,
+    )
+
+    await process_delivery(
+        delivery_id=delivery.id,
+        db=db,
+    )
+
+    result = await db.execute(
+        select(DeliveryAttempt).where(
+            DeliveryAttempt.delivery_id == delivery.id
+        )
+    )
+    attempts = result.scalars().all()
+
+    assert len(attempts) == 1
+    assert attempts[0].trigger == DeliveryTrigger.MANUAL_REPLAY
+    assert attempts[0].result == DeliveryAttemptResult.SUCCEEDED
+
+    await db.refresh(delivery)
+
+    assert delivery.status == DeliveryStatus.SUCCEEDED

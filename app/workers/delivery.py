@@ -5,7 +5,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Delivery, DeliveryStatus, FailureType
+from app.database.models import Delivery, DeliveryStatus, DeliveryTrigger, FailureType
 from app.database.session import async_session_maker
 from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
@@ -26,7 +26,7 @@ async def run_delivery_worker() -> None:
         try:
             now = datetime.now(timezone.utc)
             if last_recovery_at is None or now - last_recovery_at >= timedelta(
-                    seconds=RECOVERY_INTERVAL_SECONDS
+                seconds=RECOVERY_INTERVAL_SECONDS
             ):
                 async with async_session_maker() as db:
                     recovered = await recovery_stale_deliveries(db)
@@ -41,9 +41,8 @@ async def run_delivery_worker() -> None:
                 logger.debug("No deliveries available")
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
-            delivery, trigger = delivery
             async with async_session_maker() as db:
-                await process_delivery(delivery_id=delivery.id, db=db, trigger=trigger)
+                await process_delivery(delivery_id=delivery.id, db=db)
 
         except Exception:
             logger.exception("Delivery worker iteration failed")
@@ -71,6 +70,7 @@ async def recovery_stale_deliveries(db: AsyncSession) -> int:
 
         if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
             delivery.status = DeliveryStatus.AWAITING_RETRY
+            delivery.queued_trigger = DeliveryTrigger.RETRY
             delivery.processing_started_at = None
             delivery.next_retry_at = now
             log.warning("Stale delivery scheduled for retry")

@@ -17,7 +17,7 @@ services:
     runtime: docker
     plan: 0.5c-512mb
     dockerfilePath: ./Dockerfile
-    dockerCommand: uv run python -m app.workers.run_workers.py
+    dockerCommand: uv run python -m app.workers.run_workers
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false

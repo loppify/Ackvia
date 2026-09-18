@@ -144,7 +144,9 @@ class Delivery(Base):
     processing_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
-    queued_trigger: Mapped[DeliveryTrigger] = mapped_column(nullable=False, default=DeliveryTrigger.AUTOMATIC)
+    queued_trigger: Mapped[DeliveryTrigger] = mapped_column(
+        nullable=False, default=DeliveryTrigger.AUTOMATIC
+    )
     submission: Mapped["Submission"] = relationship(back_populates="deliveries")
     destination: Mapped["Destination"] = relationship(
         lazy="selectin", back_populates="deliveries"
