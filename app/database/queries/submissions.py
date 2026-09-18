@@ -2,7 +2,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import Delivery, DeliveryStatus, Form, Submission
+from app.database.models import (
+    Delivery,
+    DeliveryStatus,
+    DeliveryTrigger,
+    Form,
+    Submission,
+)
 
 
 async def get_detailed_submission_by_id(db: AsyncSession, submission_id: int):
@@ -24,6 +30,7 @@ async def create_submission(db: AsyncSession, form: Form, payload: dict):
                 submission_id=submission.id,
                 destination_id=destination.id,
                 status=DeliveryStatus.PENDING,
+                queued_trigger=DeliveryTrigger.AUTOMATIC,
             )
         )
     await db.commit()

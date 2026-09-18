@@ -144,6 +144,9 @@ class Delivery(Base):
     processing_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    queued_trigger: Mapped[DeliveryTrigger] = mapped_column(
+        nullable=False, default=DeliveryTrigger.AUTOMATIC
+    )
     submission: Mapped["Submission"] = relationship(back_populates="deliveries")
     destination: Mapped["Destination"] = relationship(
         lazy="selectin", back_populates="deliveries"
@@ -171,7 +174,7 @@ class DeliveryAttempt(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[DeliveryAttemptResult | None]
     error: Mapped[str | None] = mapped_column(String, nullable=True)
-    trigger: Mapped[DeliveryTrigger] = mapped_column(default=DeliveryTrigger.AUTOMATIC)
+    trigger: Mapped[DeliveryTrigger]
     delivery: Mapped["Delivery"] = relationship(back_populates="attempts")
 
 

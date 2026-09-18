@@ -5,7 +5,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Delivery, DeliveryStatus, FailureType
+from app.database.models import Delivery, DeliveryStatus, DeliveryTrigger, FailureType
 from app.database.session import async_session_maker
 from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
@@ -70,6 +70,7 @@ async def recovery_stale_deliveries(db: AsyncSession) -> int:
 
         if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
             delivery.status = DeliveryStatus.AWAITING_RETRY
+            delivery.queued_trigger = DeliveryTrigger.RETRY
             delivery.processing_started_at = None
             delivery.next_retry_at = now
             log.warning("Stale delivery scheduled for retry")
