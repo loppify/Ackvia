@@ -45,7 +45,7 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
     if delivery is None:
         await db.rollback()
         return None
-    logger.bind(
+    log = logger.bind(
         delivery_id=delivery.id,
         submission_id=delivery.submission_id,
         destination_id=delivery.destination_id,
@@ -54,7 +54,7 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
     delivery.status = DeliveryStatus.PROCESSING
     delivery.processing_started_at = datetime.now(timezone.utc)
     await db.commit()
-    logger.info("Delivery claimed")
+    log.info("Delivery claimed")
 
     return delivery
 
