@@ -40,4 +40,4 @@ def downgrade() -> None:
     op.drop_column("deliveries", "queued_trigger")
     # ### end Alembic commands ###
 
-    op.execute("DROP TYPE IF EXISTS deliverytrigger")
+    op.execute("DROP TYPE IF EXISTS deliverytrigger CASCADE")

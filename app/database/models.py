@@ -67,7 +67,24 @@ class Base(DeclarativeBase):
         return cls.__name__.lower() + "s"
 
 
+class Workspace(Base):
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(nullable=False)
+
+    forms: Mapped[list["Form"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
+
+
 class Form(Base):
+    __table_args__ = (
+        Index(
+            "ix_forms_workspace_id",
+            "workspace_id",
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
@@ -80,6 +97,10 @@ class Form(Base):
     destinations: Mapped[list["Destination"]] = relationship(
         back_populates="form", cascade="all, delete-orphan"
     )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    workspace: Mapped["Workspace"] = relationship(back_populates="forms")
 
 
 class Submission(Base):
