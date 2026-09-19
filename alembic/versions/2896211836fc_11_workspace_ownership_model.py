@@ -57,7 +57,12 @@ def upgrade() -> None:
     op.alter_column("forms", "workspace_id", nullable=False)
     op.create_index("ix_forms_workspace_id", "forms", ["workspace_id"], unique=False)
     op.create_foreign_key(
-        "forms_workspace_id_fkey", "forms", "workspaces", ["workspace_id"], ["id"], ondelete="CASCADE"
+        "forms_workspace_id_fkey",
+        "forms",
+        "workspaces",
+        ["workspace_id"],
+        ["id"],
+        ondelete="CASCADE",
     )
     # ### end Alembic commands ###
 

@@ -227,11 +227,7 @@ class Workspace(Base):
 
 
 class User(Base):
-    __table_args__ = (
-        UniqueConstraint(
-            "email", name="uq_users_email"
-        ),
-    )
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
@@ -247,17 +243,14 @@ class WorkspaceMembership(Base):
         UniqueConstraint(
             "user_id", "workspace_id", name="uq_workspace_memberships_user_workspace"
         ),
-        Index(
-            "ix_workspace_memberships_workspace_id",
-            "workspace_id"
-        ),
+        Index("ix_workspace_memberships_workspace_id", "workspace_id"),
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     role: Mapped[WorkspaceRole] = mapped_column(nullable=False)
-    workspace: Mapped["Workspace"] = relationship(
-        back_populates="memberships"
-    )
-    user: Mapped["User"] = relationship(
-        back_populates="memberships"
-    )
+    workspace: Mapped["Workspace"] = relationship(back_populates="memberships")
+    user: Mapped["User"] = relationship(back_populates="memberships")
