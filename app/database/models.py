@@ -97,10 +97,10 @@ class Form(Base):
     destinations: Mapped[list["Destination"]] = relationship(
         back_populates="form", cascade="all, delete-orphan"
     )
-    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    workspace: Mapped["Workspace"] = relationship(
-        back_populates="forms"
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
     )
+    workspace: Mapped["Workspace"] = relationship(back_populates="forms")
 
 
 class Submission(Base):
