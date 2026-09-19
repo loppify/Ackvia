@@ -24,7 +24,7 @@ from app.database.models import (
     Destination,
     FailureType,
     Form,
-    Submission,
+    Submission, Workspace,
 )
 from app.database.session import get_db
 from app.main import app
@@ -68,8 +68,8 @@ async def client():
     transport = ASGITransport(app=app)
 
     async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
+            transport=transport,
+            base_url="http://test",
     ) as client:
         yield client
 
@@ -102,16 +102,31 @@ async def db():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+async def create_form(
+    db: AsyncSession,
+    *,
+    title: str = "Test form",
+    language: str = "en",
+    created_at: datetime | None = None,
+) -> Form:
+    workspace = Workspace(name="Test Workspace")
 
+    form = Form(
+        title=title,
+        language=language,
+        workspace=workspace,
+    )
+
+    if created_at is not None:
+        form.created_at = created_at
+
+    return form
 
 async def create_delivery(
     db: AsyncSession,
     status: DeliveryStatus = DeliveryStatus.PENDING,
 ) -> Delivery:
-    form = Form(
-        title="Test form",
-        language="en",
-    )
+    form = await create_form(db)
 
     destination = Destination(
         form=form,
@@ -165,7 +180,7 @@ async def test_invalid_form_uuid(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_delivery_creation(db: AsyncSession):
-    form = Form(
+    form = await create_form(db,
         title="Landing Test",
         language="en",
     )
@@ -207,9 +222,9 @@ async def test_delivery_creation(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_new_delivery_starts_pending_without_attempts(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
-    form = Form(
+    form = await create_form(db,
         title="Landing Test",
         language="en",
     )
@@ -243,7 +258,7 @@ async def test_new_delivery_starts_pending_without_attempts(
 
 @pytest.mark.asyncio
 async def test_duplicate_delivery_failure(db: AsyncSession):
-    form = Form(
+    form = await create_form(db,
         title="Landing Test",
         language="en",
     )
@@ -291,9 +306,9 @@ async def test_duplicate_delivery_failure(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_delivery_states_are_independent(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
-    form = Form(
+    form = await create_form(db,
         title="Landing Test",
         language="en",
     )
@@ -372,8 +387,8 @@ async def test_delivery_states_are_independent(
     ],
 )
 async def test_delivery_status_is_persisted(
-    db: AsyncSession,
-    status: DeliveryStatus,
+        db: AsyncSession,
+        status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -393,7 +408,7 @@ async def test_delivery_status_is_persisted(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_can_be_selected_when_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -418,7 +433,7 @@ async def test_awaiting_retry_delivery_can_be_selected_when_due(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_is_not_selected_before_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -443,7 +458,7 @@ async def test_awaiting_retry_delivery_is_not_selected_before_due(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_schedules_retry(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -485,7 +500,7 @@ async def test_retryable_failure_schedules_retry(
 
 @pytest.mark.asyncio
 async def test_retry_delay_increases_with_attempt_count(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -521,7 +536,7 @@ async def test_retry_delay_increases_with_attempt_count(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_exhausts_retries(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -584,7 +599,7 @@ async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatc
 
 @pytest.mark.asyncio
 async def test_unexpected_exception_respects_max_attempts(
-    db: AsyncSession, monkeypatch
+        db: AsyncSession, monkeypatch
 ):
     async def fake_execute_delivery_attempt(destination, message):
         raise RuntimeError("Test Failure")
@@ -775,10 +790,10 @@ async def test_recovered_delivery_can_be_claimed(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_returns_only_its_submissions(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
-    form = Form(title="Test form")
+    form = await create_form(db, title="Test form")
 
     submission_1 = Submission(
         form=form,
@@ -807,11 +822,11 @@ async def test_get_form_submissions_returns_only_its_submissions(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_does_not_return_other_form_submissions(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
-    form_1 = Form(title="Form 1")
-    form_2 = Form(title="Form 2")
+    form_1 = await create_form(db, title="Form 1")
+    form_2 = await create_form(db, title="Form 2")
 
     submission_1 = Submission(
         form=form_1,
@@ -838,10 +853,10 @@ async def test_get_form_submissions_does_not_return_other_form_submissions(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_are_ordered_newest_first(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
-    form = Form(title="Test form")
+    form = await create_form(db, title="Test form")
 
     old_submission = Submission(
         form=form,
@@ -870,10 +885,10 @@ async def test_get_form_submissions_are_ordered_newest_first(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_respects_limit(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
-    form = Form(title="Test form")
+    form = await create_form(db, title="Test form")
 
     for i in range(5):
         Submission(
@@ -898,10 +913,10 @@ async def test_get_form_submissions_respects_limit(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_respects_offset(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
-    form = Form(title="Test form")
+    form = await create_form(db, title="Test form")
 
     now = datetime.now(timezone.utc)
 
@@ -936,7 +951,7 @@ async def test_get_form_submissions_respects_offset(
 
 @pytest.mark.asyncio
 async def test_get_form_submissions_returns_404_for_unknown_form(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     form_id = uuid.uuid4()
 
@@ -947,8 +962,8 @@ async def test_get_form_submissions_returns_404_for_unknown_form(
 
 @pytest.mark.asyncio
 async def test_get_submission_returns_submission_with_payload(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PENDING)
     submission = delivery.submission
@@ -966,8 +981,8 @@ async def test_get_submission_returns_submission_with_payload(
 
 @pytest.mark.asyncio
 async def test_get_submission_returns_deliveries(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PENDING)
     submission = delivery.submission
@@ -990,8 +1005,8 @@ async def test_get_submission_returns_deliveries(
 
 @pytest.mark.asyncio
 async def test_get_submission_returns_delivery_state(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.AWAITING_RETRY)
 
@@ -1017,7 +1032,7 @@ async def test_get_submission_returns_delivery_state(
 
 @pytest.mark.asyncio
 async def test_get_submission_not_found(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     response = await client.get("/api/submissions/999999")
 
@@ -1026,7 +1041,7 @@ async def test_get_submission_not_found(
 
 @pytest.mark.asyncio
 async def test_get_submission_invalid_id(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     response = await client.get("/api/submissions/not-an-id")
 
@@ -1035,11 +1050,11 @@ async def test_get_submission_invalid_id(
 
 @pytest.mark.asyncio
 async def test_get_forms_returns_forms(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
-    form_1 = Form(title="Form 1")
-    form_2 = Form(title="Form 2")
+    form_1 = await create_form(db, title="Form 1")
+    form_2 = await create_form(db, title="Form 2")
 
     db.add_all([form_1, form_2])
     await db.commit()
@@ -1059,16 +1074,16 @@ async def test_get_forms_returns_forms(
 
 @pytest.mark.asyncio
 async def test_get_forms_are_ordered_newest_first(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     now = datetime.now(timezone.utc)
 
-    old_form = Form(
+    old_form = await create_form(db,
         title="Old form",
         created_at=now - timedelta(hours=1),
     )
-    new_form = Form(
+    new_form = await create_form(db,
         title="New form",
         created_at=now,
     )
@@ -1089,13 +1104,13 @@ async def test_get_forms_are_ordered_newest_first(
 
 @pytest.mark.asyncio
 async def test_get_forms_respects_limit_and_offset(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     now = datetime.now(timezone.utc)
 
     forms = [
-        Form(
+        await create_form(db,
             title=f"Form {i}",
             created_at=now + timedelta(seconds=i),
         )
@@ -1124,7 +1139,7 @@ async def test_get_forms_respects_limit_and_offset(
 
 @pytest.mark.asyncio
 async def test_get_forms_returns_empty_list_when_no_forms_exist(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     response = await client.get("/api/forms")
 
@@ -1134,8 +1149,8 @@ async def test_get_forms_returns_empty_list_when_no_forms_exist(
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_delivery(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PENDING)
 
@@ -1155,8 +1170,8 @@ async def test_get_delivery_returns_delivery(
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_attempts(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
 
@@ -1193,8 +1208,8 @@ async def test_get_delivery_returns_attempts(
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_attempts_in_chronological_order(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
 
@@ -1228,7 +1243,7 @@ async def test_get_delivery_returns_attempts_in_chronological_order(
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_404_when_not_found(
-    client: AsyncClient,
+        client: AsyncClient,
 ):
     response = await client.get("/api/deliveries/999999")
 
@@ -1237,7 +1252,7 @@ async def test_get_delivery_returns_404_when_not_found(
 
 @pytest.mark.asyncio
 async def test_failed_delivery_can_be_queued_for_manual_replay(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -1261,7 +1276,7 @@ async def test_failed_delivery_can_be_queued_for_manual_replay(
 
 @pytest.mark.asyncio
 async def test_unknown_delivery_can_be_queued_for_manual_replay(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -1278,7 +1293,7 @@ async def test_unknown_delivery_can_be_queued_for_manual_replay(
 
 @pytest.mark.asyncio
 async def test_manual_replay_raises_not_found_for_missing_delivery(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     with pytest.raises(DeliveryNotFoundError):
         await manual_delivery(999999, db)
@@ -1295,8 +1310,8 @@ async def test_manual_replay_raises_not_found_for_missing_delivery(
     ],
 )
 async def test_manual_replay_raises_not_replayable_for_invalid_status(
-    db: AsyncSession,
-    status: DeliveryStatus,
+        db: AsyncSession,
+        status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -1313,7 +1328,7 @@ async def test_manual_replay_raises_not_replayable_for_invalid_status(
 
 @pytest.mark.asyncio
 async def test_manual_replay_not_replayable_preserves_delivery(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -1393,9 +1408,9 @@ async def test_replay_missing_delivery_returns_404(client):
     ],
 )
 async def test_replay_non_replayable_delivery_returns_409(
-    client,
-    db: AsyncSession,
-    status: DeliveryStatus,
+        client,
+        db: AsyncSession,
+        status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -1414,9 +1429,9 @@ async def test_replay_non_replayable_delivery_returns_409(
 
 @pytest.mark.asyncio
 async def test_manual_replay_is_recorded_in_attempt_history(
-    client,
-    db: AsyncSession,
-    monkeypatch,
+        client,
+        db: AsyncSession,
+        monkeypatch,
 ):
     delivery = await create_delivery(
         db,
@@ -1464,3 +1479,112 @@ async def test_manual_replay_is_recorded_in_attempt_history(
     await db.refresh(delivery)
 
     assert delivery.status == DeliveryStatus.SUCCEEDED
+
+@pytest.mark.asyncio
+async def test_form_belongs_to_workspace(db: AsyncSession) -> None:
+    workspace = Workspace(name="Test Workspace")
+    form = Form(
+        title="Contact Form",
+        workspace=workspace,
+    )
+
+    db.add(form)
+    await db.commit()
+
+    assert form.workspace_id == workspace.id
+    assert form.workspace is workspace
+
+
+@pytest.mark.asyncio
+async def test_workspace_contains_forms(db: AsyncSession) -> None:
+    workspace = Workspace(name="Agency Workspace")
+
+    form_a = Form(
+        title="Contact Form",
+        workspace=workspace,
+    )
+    form_b = Form(
+        title="Quote Form",
+        workspace=workspace,
+    )
+
+    db.add_all([form_a, form_b])
+    await db.commit()
+
+    await db.refresh(workspace, ["forms"])
+
+    assert len(workspace.forms) == 2
+    assert {form.title for form in workspace.forms} == {
+        "Contact Form",
+        "Quote Form",
+    }
+
+
+@pytest.mark.asyncio
+async def test_form_workspace_relationship_persists_after_reload(
+        db: AsyncSession,
+) -> None:
+    workspace = Workspace(name="Persistent Workspace")
+    form = Form(
+        title="Demo Request",
+        workspace=workspace,
+    )
+
+    db.add(form)
+    await db.commit()
+
+    workspace_id = workspace.id
+    form_id = form.id
+
+    db.expunge_all()
+
+    result = await db.execute(
+        select(Form).where(Form.id == form_id)
+    )
+    loaded_form = result.scalar_one()
+
+    assert loaded_form.workspace_id == workspace_id
+
+    await db.refresh(loaded_form, ["workspace"])
+
+    assert loaded_form.workspace.id == workspace_id
+    assert loaded_form.workspace.name == "Persistent Workspace"
+
+
+@pytest.mark.asyncio
+async def test_deleting_workspace_deletes_its_forms(
+        db: AsyncSession,
+) -> None:
+    workspace = Workspace(name="Disposable Workspace")
+    form = Form(
+        title="Disposable Form",
+        workspace=workspace,
+    )
+
+    db.add(form)
+    await db.commit()
+
+    form_id = form.id
+
+    await db.delete(workspace)
+    await db.commit()
+
+    result = await db.execute(
+        select(Form).where(Form.id == form_id)
+    )
+
+    assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_form_cannot_exist_without_workspace(
+        db: AsyncSession,
+) -> None:
+    form = Form(title="Orphan Form")
+
+    db.add(form)
+
+    with pytest.raises(Exception):
+        await db.commit()
+
+    await db.rollback()
