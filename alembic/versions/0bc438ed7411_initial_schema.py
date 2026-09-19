@@ -255,7 +255,7 @@ def downgrade() -> None:
     op.drop_table("destinations")
     op.drop_table("forms")
 
-    op.execute("DROP TYPE IF EXISTS deliverytrigger")
-    op.execute("DROP TYPE IF EXISTS deliveryattemptresult")
-    op.execute("DROP TYPE IF EXISTS failuretype")
-    op.execute("DROP TYPE IF EXISTS deliverystatus")
+    sa.Enum(name="deliverytrigger").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="deliveryattemptresult").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="failuretype").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="deliverystatus").drop(op.get_bind(), checkfirst=True)
