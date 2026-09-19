@@ -7,3 +7,4 @@
 .env.test
 .opencode
 AGENTS.md
+frontend/*.md
