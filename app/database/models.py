@@ -52,6 +52,11 @@ class DeliveryTrigger(str, enum.Enum):
     MANUAL_REPLAY = "manual_replay"
 
 
+class WorkspaceRole(str, enum.Enum):
+    OWNER = "owner"
+    MEMBER = "member"
+
+
 class Base(DeclarativeBase):
     __abstract__ = True
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -65,17 +70,6 @@ class Base(DeclarativeBase):
     @declared_attr.directive
     def __tablename__(cls) -> str:
         return cls.__name__.lower() + "s"
-
-
-class Workspace(Base):
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    name: Mapped[str] = mapped_column(nullable=False)
-
-    forms: Mapped[list["Form"]] = relationship(
-        back_populates="workspace", cascade="all, delete-orphan"
-    )
 
 
 class Form(Base):
@@ -216,3 +210,54 @@ class Destination(Base):
     reference: Mapped[str] = mapped_column(String(255), nullable=False)
     form: Mapped["Form"] = relationship(back_populates="destinations")
     deliveries: Mapped[list["Delivery"]] = relationship(back_populates="destination")
+
+
+class Workspace(Base):
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(nullable=False)
+
+    forms: Mapped[list["Form"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
+    memberships: Mapped[list["WorkspaceMembership"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
+
+
+class User(Base):
+    __table_args__ = (
+        UniqueConstraint(
+            "email", name="uq_users_email"
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    memberships: Mapped[list["WorkspaceMembership"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class WorkspaceMembership(Base):
+    __tablename__ = "workspace_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "workspace_id", name="uq_workspace_memberships_user_workspace"
+        ),
+        Index(
+            "ix_workspace_memberships_workspace_id",
+            "workspace_id"
+        ),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[WorkspaceRole] = mapped_column(nullable=False)
+    workspace: Mapped["Workspace"] = relationship(
+        back_populates="memberships"
+    )
+    user: Mapped["User"] = relationship(
+        back_populates="memberships"
+    )
