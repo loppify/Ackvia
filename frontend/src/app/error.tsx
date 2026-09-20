@@ -1,8 +1,9 @@
 "use client";
 
-import { Fault, Mark } from "@/features/desk/primitives";
 import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
+import { DashboardPage, PageHeader } from "@/components/dashboard-ui";
 
 export default function Error({ reset }: { reset: () => void }) {
-  return <main className="standalone-state"><Link className="brand" href="/"><Mark />ackvia.</Link><Fault error={{ title: "The investigation desk could not load", message: "Your captured evidence is stored separately. Try loading the workspace again." }} onRetry={reset} /><Link className="button" href="/">Open the desk</Link></main>;
+  return <AppShell><DashboardPage><PageHeader title="Something went wrong" description="Ackvia could not render this workspace view. Your captured evidence is stored separately." actions={<><button className="dash-button" type="button" onClick={reset}>Try again</button><Link className="dash-button" href="/overview">Open Overview</Link></>} /></DashboardPage></AppShell>;
 }

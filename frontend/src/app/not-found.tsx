@@ -1,6 +1,7 @@
-import { Mark } from "@/features/desk/primitives";
 import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
+import { DashboardPage, PageHeader } from "@/components/dashboard-ui";
 
 export default function NotFound() {
-  return <main className="standalone-state"><Link className="brand" href="/"><Mark />ackvia.</Link><h1>This route doesn’t exist.</h1><p className="muted">Return to the investigation desk to choose a form and submission.</p><Link className="button" href="/">Open the desk</Link></main>;
+  return <AppShell><DashboardPage><PageHeader title="Page not found" description="This route does not exist in the Ackvia workspace." actions={<Link className="dash-button" href="/overview">Return to Overview</Link>} /></DashboardPage></AppShell>;
 }

@@ -6,4 +6,4 @@ export type SiteHealth = { id: string; name: string; domain: string; leads: stri
 
 export { deliveryBreakdown };
 export const activityEvents = activities;
-export const siteHealth: SiteHealth[] = sites.map((site) => ({ id: site.id, name: site.name, domain: site.domain, leads: site.leads.toLocaleString(), deliveryRate: site.deliveryRate, status: site.health }));
+export const siteHealth: SiteHealth[] = sites.slice(0, 5).map((site) => ({ id: site.id, name: site.name, domain: site.domain, leads: site.leads.toLocaleString(), deliveryRate: site.deliveryRate, status: site.health }));
