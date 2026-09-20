@@ -39,7 +39,7 @@
 @media (max-width: 720px) {
     .overview-sidebar { position: static; width: 56px; padding: 18px 8px; }
     .overview-brand { padding: 0 10px 24px; }
-    .overview-brand > span:last-child, .nav-item span, .nav-item b, .sidebar-bottom .nav-item, .workspace-copy, .workspace-switcher > svg { display: none; }
+    .overview-brand > span:last-child, .nav-item span, .nav-item b, .nav-section-label, .sidebar-bottom .nav-item, .workspace-copy, .workspace-switcher > svg { display: none; }
     .nav-item, .workspace-switcher { justify-content: center; }
     .nav-item { padding-inline: 0; }
     .workspace-switcher { padding-inline: 0; }
