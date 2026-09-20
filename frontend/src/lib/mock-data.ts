@@ -26,6 +26,7 @@ export const clients: Client[] = [
 export const sites: Site[] = [
   { id: "keller-solar-site", clientId: "keller-solar", name: "Keller Solar", domain: "kellersolar.com", leadPathIds: ["keller-contact", "keller-quote"], leads: 48, deliveryRate: "96.2%", health: "Attention", lastActivity: "08:50" },
   { id: "northwind-main", clientId: "northwind-dental", name: "Northwind Dental", domain: "northwinddental.com", leadPathIds: ["northwind-contact", "northwind-booking"], leads: 142, deliveryRate: "100%", health: "Healthy", lastActivity: "08:31" },
+  { id: "northwind-ortho", clientId: "northwind-dental", name: "Northwind Ortho", domain: "northwindortho.com", leadPathIds: ["northwind-ortho-contact"], leads: 0, deliveryRate: "—", health: "Healthy", lastActivity: "No recent activity" },
   { id: "smith-realty-site", clientId: "smith-realty", name: "Smith Realty", domain: "smithrealty.com", leadPathIds: ["smith-contact", "smith-viewing"], leads: 87, deliveryRate: "99.8%", health: "Healthy", lastActivity: "Yesterday" },
   { id: "pizza-roma-site", clientId: "pizza-roma", name: "Pizza Roma", domain: "pizzaroma.com", leadPathIds: ["pizza-contact"], leads: 24, deliveryRate: "100%", health: "Healthy", lastActivity: "Yesterday" },
   { id: "old-mill-site", clientId: "old-mill-studio", name: "Old Mill Studio", domain: "oldmillstudio.com", leadPathIds: ["old-mill-contact"], leads: 31, deliveryRate: "99.7%", health: "Healthy", lastActivity: "2 days ago" },
@@ -36,13 +37,19 @@ export const leadPaths: LeadPath[] = [
   { id: "keller-quote", siteId: "keller-solar-site", name: "Quote Request", status: "Healthy", recentLeads: 17, destinations: ["Telegram", "CRM Webhook"], deliveryHealth: "100%", lastEvent: "Yesterday" },
   { id: "northwind-contact", siteId: "northwind-main", name: "Contact Us", status: "Healthy", recentLeads: 84, destinations: ["CRM Webhook", "Email"], deliveryHealth: "100%", lastEvent: "08:31" },
   { id: "northwind-booking", siteId: "northwind-main", name: "Book an Appointment", status: "Healthy", recentLeads: 58, destinations: ["CRM Webhook"], deliveryHealth: "100%", lastEvent: "Yesterday" },
+  { id: "northwind-ortho-contact", siteId: "northwind-ortho", name: "Contact Us", status: "Healthy", recentLeads: 0, destinations: ["CRM Webhook"], deliveryHealth: "—", lastEvent: "No recent activity" },
   { id: "smith-contact", siteId: "smith-realty-site", name: "Contact Us", status: "Healthy", recentLeads: 52, destinations: ["CRM Webhook"], deliveryHealth: "100%", lastEvent: "Yesterday" },
   { id: "smith-viewing", siteId: "smith-realty-site", name: "Book a Viewing", status: "Healthy", recentLeads: 35, destinations: ["CRM Webhook"], deliveryHealth: "99.7%", lastEvent: "Yesterday" },
   { id: "pizza-contact", siteId: "pizza-roma-site", name: "Contact Us", status: "Healthy", recentLeads: 24, destinations: ["Email"], deliveryHealth: "100%", lastEvent: "Yesterday" },
   { id: "old-mill-contact", siteId: "old-mill-site", name: "Project Enquiry", status: "Healthy", recentLeads: 31, destinations: ["CRM Webhook"], deliveryHealth: "99.7%", lastEvent: "2 days ago" },
 ];
 
-export const leads: Lead[] = [{ id: "LD-2026-001245", clientId: "keller-solar", siteId: "keller-solar-site", leadPathId: "keller-contact", customerName: "Sarah Mitchell", email: "sarah@example.com", phone: "+49 151 23456789", message: "Hi, I'm interested in getting a quote for a solar panel installation for our house. Please contact me regarding the options and pricing. Thank you!", capturedAt: "Sep 20, 2026 — 08:42:31", state: "Captured safely", deliveryIds: ["delivery-telegram-001245", "delivery-keller-crm"] }];
+export const leads: Lead[] = [
+  { id: "LD-2026-001245", clientId: "keller-solar", siteId: "keller-solar-site", leadPathId: "keller-contact", customerName: "Sarah Mitchell", email: "sarah@example.com", phone: "+49 151 23456789", message: "Hi, I'm interested in getting a quote for a solar panel installation for our house. Please contact me regarding the options and pricing. Thank you!", capturedAt: "Sep 20, 2026 — 08:42:31", state: "Captured safely", deliveryIds: ["delivery-telegram-001245", "delivery-keller-crm"] },
+  { id: "lead-northwind-0831", clientId: "northwind-dental", siteId: "northwind-main", leadPathId: "northwind-contact", customerName: "Emily Carter", email: "emily@example.com", phone: "+1 555 0142", message: "I would like to book a consultation.", capturedAt: "Sep 20, 2026 — 08:31:02", state: "Captured safely", deliveryIds: ["delivery-northwind-001"] },
+  { id: "lead-smith-001", clientId: "smith-realty", siteId: "smith-realty-site", leadPathId: "smith-contact", customerName: "Daniel Brooks", email: "daniel@example.com", phone: "+1 555 0187", message: "Could I arrange a viewing this week?", capturedAt: "Sep 19, 2026 — 14:22:00", state: "Captured safely", deliveryIds: ["delivery-smith-001"] },
+  { id: "lead-pizza-001", clientId: "pizza-roma", siteId: "pizza-roma-site", leadPathId: "pizza-contact", customerName: "Marco Rossi", email: "marco@example.com", phone: "+1 555 0124", message: "I have a question about catering.", capturedAt: "Sep 19, 2026 — 11:04:00", state: "Captured safely", deliveryIds: ["delivery-pizza-001"] },
+];
 
 export const deliveries: Delivery[] = [
   { id: "delivery-telegram-001245", leadId: "LD-2026-001245", destination: "Telegram", state: "Delivered", attemptIds: ["attempt-telegram-1"], createdAt: "08:42:31", deliveredAt: "08:42:32" },
