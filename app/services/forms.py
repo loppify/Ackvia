@@ -1,9 +1,10 @@
 import enum
 
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Destination, Form
+from app.database.models import Destination, Form, Workspace
 
 
 class DestinationType(str, enum.Enum):
@@ -24,8 +25,8 @@ class FormCreate(BaseModel):
 async def create_form(
     db: AsyncSession, title: str, language: str, destinations: list[DestinationCreate]
 ):
-
-    form = Form(title=title, language=language)
+    wp = await db.execute(select(Workspace))
+    form = Form(title=title, language=language, workspace=wp.scalar_one())
 
     for destination_data in destinations:
         destination = Destination(

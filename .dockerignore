@@ -1,0 +1,28 @@
+# Frontend is deployed separately
+frontend/
+
+# Python local environment / caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Git / IDE
+.git/
+.github/
+.idea/
+
+# Local tools
+.opencode/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Misc
+*.log
+.coverage
+htmlcov/
+test-results/
