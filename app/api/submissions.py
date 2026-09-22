@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.queries.submissions import get_detailed_submission_by_id
@@ -19,7 +19,7 @@ async def get_detailed_submission(
 
     if detailed_submission is None:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Submission not found",
         )
 

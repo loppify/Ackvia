@@ -20,9 +20,9 @@ router = APIRouter(prefix="/api/forms", tags=["forms"])
 
 @router.post("", response_model=FormRead, status_code=status.HTTP_201_CREATED)
 async def create_form_endpoint(
-    data: FormCreate,
-    locale: Annotated[tuple[str, dict[str, str]], Depends(get_locale)],
-    db: AsyncSession = Depends(get_db),
+        data: FormCreate,
+        locale: Annotated[tuple[str, dict[str, str]], Depends(get_locale)],
+        db: AsyncSession = Depends(get_db),
 ):
     current_lang, _ = locale
     lang = data.language if data.language in SUPPORTED_LANGUAGES else current_lang
@@ -32,15 +32,15 @@ async def create_form_endpoint(
 
 @router.get("/{form_id}/submissions", response_model=list[SubmissionBase])
 async def get_form_submissions(
-    form_id: uuid.UUID,
-    limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
+        form_id: uuid.UUID,
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        db: AsyncSession = Depends(get_db),
 ):
     form = await get_form_by_id(db, form_id)
 
     if form is None:
-        raise HTTPException(status_code=404, detail="Form not foud")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not foud")
 
     return await get_form_submissions_from_db(
         db=db, form_id=form_id, limit=limit, offset=offset
@@ -49,8 +49,8 @@ async def get_form_submissions(
 
 @router.get("", response_model=list[FormRead])
 async def get_forms(
-    limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        db: AsyncSession = Depends(get_db),
 ):
     return await get_all_forms(db=db, limit=limit, offset=offset)
