@@ -1,14 +1,17 @@
 import hashlib
 import secrets
-from datetime import timedelta, datetime, UTC
+from datetime import UTC, datetime, timedelta
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, InvalidHashError
-from sqlalchemy import func
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import User, Session
-from app.database.queries.auth import get_user_by_email, get_session_by_token_hash, delete_session_token_by_token_hash
+from app.database.models import Session, User
+from app.database.queries.auth import (
+    delete_session_token_by_token_hash,
+    get_session_by_token_hash,
+    get_user_by_email,
+)
 
 password_hasher = PasswordHasher()
 SESSION_TTL = 30
@@ -43,7 +46,7 @@ async def create_session(db: AsyncSession, user: User) -> str:
     session = Session(
         token_hash=hashed_token,
         expires_at=datetime.now(UTC) + timedelta(days=SESSION_TTL),
-        user=user
+        user=user,
     )
 
     db.add(session)
@@ -65,10 +68,7 @@ async def register_user(db: AsyncSession, email: str, password: str) -> User:
     if await get_user_by_email(db, normalized_email) is not None:
         raise UserAlreadyExistsError
 
-    user = User(
-        email=normalized_email,
-        password_hash=hash_password(password)
-    )
+    user = User(email=normalized_email, password_hash=hash_password(password))
     db.add(user)
     await db.flush()
     return user

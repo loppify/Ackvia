@@ -1,15 +1,18 @@
-import datetime
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import User, Session
+from app.database.models import Session, User
 
 
-async def get_session_by_token_hash(db: AsyncSession, token_hash: str) -> Session | None:
+async def get_session_by_token_hash(
+    db: AsyncSession, token_hash: str
+) -> Session | None:
     session = await db.execute(
-        select(Session).options(selectinload(Session.user)).where(Session.token_hash == token_hash))
+        select(Session)
+        .options(selectinload(Session.user))
+        .where(Session.token_hash == token_hash)
+    )
     return session.scalar_one_or_none()
 
 

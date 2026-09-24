@@ -8,78 +8,184 @@ from app.database.models import (
     DeliveryAttempt,
     DeliveryAttemptResult,
     DeliveryStatus,
-    DeliveryTrigger,
+    DeliveryTrigger, WorkspaceRole,
 )
 from app.services.delivery import (
     DeliveryNotFoundError,
     DeliveryNotReplayableError,
     claim_next_delivery,
-    manual_delivery,
-    process_delivery,
+    process_delivery, queue_manual_replay,
 )
-from tests.conftest import create_delivery
+from tests.conftest import create_delivery, create_user, create_workspace, create_membership, \
+    create_authenticated_workspace
 
 
 @pytest.mark.asyncio
-async def test_failed_delivery_can_be_queued_for_manual_replay(db: AsyncSession):
-    delivery = await create_delivery(db, DeliveryStatus.FAILED)
+async def test_failed_delivery_can_be_queued_for_manual_replay(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    delivery = await create_delivery(
+        db,
+        DeliveryStatus.FAILED,
+        workspace=workspace,
+    )
+
     delivery.attempt_count = 5
     delivery.next_retry_at = datetime.now(timezone.utc)
-    await db.commit()
 
-    result = await manual_delivery(delivery.id, db)
+    await db.flush()
+
+    result = await queue_manual_replay(
+        db,
+        delivery.id,
+        user.id,
+    )
+
     assert result.status == DeliveryStatus.PENDING
     assert result.queued_trigger == DeliveryTrigger.MANUAL_REPLAY
     assert result.failure_type is None
+
+    # Replay starts a new processing cycle,
+    # but does not rewrite attempt history.
     assert result.attempt_count == 5
+    assert result.next_retry_at is None
+    assert result.processing_started_at is None
 
 
 @pytest.mark.asyncio
-async def test_unknown_delivery_can_be_queued_for_manual_replay(db: AsyncSession):
-    delivery = await create_delivery(db, DeliveryStatus.UNKNOWN)
-    result = await manual_delivery(delivery.id, db)
+async def test_unknown_delivery_can_be_queued_for_manual_replay(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.OWNER,
+    )
+
+    delivery = await create_delivery(
+        db,
+        DeliveryStatus.UNKNOWN,
+        workspace=workspace,
+    )
+
+    result = await queue_manual_replay(
+        db,
+        delivery.id,
+        user.id,
+    )
+
     assert result.status == DeliveryStatus.PENDING
     assert result.queued_trigger == DeliveryTrigger.MANUAL_REPLAY
+    assert result.failure_type is None
+    assert result.next_retry_at is None
+    assert result.processing_started_at is None
 
 
 @pytest.mark.asyncio
-async def test_manual_replay_raises_not_found_for_missing_delivery(db: AsyncSession):
+async def test_manual_replay_raises_not_found_for_missing_delivery(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+
     with pytest.raises(DeliveryNotFoundError):
-        await manual_delivery(999999, db)
+        await queue_manual_replay(
+            db,
+            999999,
+            user.id,
+        )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [
-    DeliveryStatus.PENDING,
-    DeliveryStatus.PROCESSING,
-    DeliveryStatus.AWAITING_RETRY,
-    DeliveryStatus.SUCCEEDED,
-])
-async def test_manual_replay_rejects_non_replayable_status(db, status):
-    delivery = await create_delivery(db, status)
+@pytest.mark.parametrize(
+    "status",
+    [
+        DeliveryStatus.PENDING,
+        DeliveryStatus.PROCESSING,
+        DeliveryStatus.AWAITING_RETRY,
+        DeliveryStatus.SUCCEEDED,
+    ],
+)
+async def test_manual_replay_rejects_non_replayable_status(
+        db: AsyncSession,
+        status: DeliveryStatus,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    delivery = await create_delivery(
+        db,
+        status,
+        workspace=workspace,
+    )
+
     with pytest.raises(DeliveryNotReplayableError):
-        await manual_delivery(delivery.id, db)
+        await queue_manual_replay(
+            db,
+            delivery.id,
+            user.id,
+        )
 
 
 @pytest.mark.asyncio
 async def test_replay_failed_delivery_endpoint(client, db: AsyncSession):
-    delivery = await create_delivery(db, DeliveryStatus.FAILED)
+    user, workspace = await create_authenticated_workspace(client, db)
+
+    delivery = await create_delivery(
+        db,
+        DeliveryStatus.FAILED,
+        workspace=workspace,
+    )
+
     response = await client.post(f"/api/deliveries/{delivery.id}/replay")
+
     assert response.status_code == 202
     assert response.json()["status"] == DeliveryStatus.PENDING.value
 
 
 @pytest.mark.asyncio
-async def test_replay_missing_delivery_returns_404(client):
+async def test_replay_missing_delivery_returns_404(client, db: AsyncSession):
+    await create_authenticated_workspace(client, db)
+
     response = await client.post("/api/deliveries/999999/replay")
+
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_manual_replay_is_recorded_in_attempt_history(
-        client, db: AsyncSession, monkeypatch,
+        client,
+        db: AsyncSession,
+        monkeypatch,
 ):
-    delivery = await create_delivery(db, DeliveryStatus.FAILED)
+    user, workspace = await create_authenticated_workspace(client, db)
+
+    delivery = await create_delivery(
+        db,
+        DeliveryStatus.FAILED,
+        workspace=workspace,
+    )
+
     response = await client.post(f"/api/deliveries/{delivery.id}/replay")
     assert response.status_code == 202
 
@@ -94,11 +200,80 @@ async def test_manual_replay_is_recorded_in_attempt_history(
         "app.services.delivery.execute_delivery_attempt",
         fake_execute_delivery_attempt,
     )
+
     await process_delivery(delivery.id, db)
 
-    result = await db.scalars(
-        select(DeliveryAttempt).where(DeliveryAttempt.delivery_id == delivery.id)
+    attempt = await db.scalar(
+        select(DeliveryAttempt).where(
+            DeliveryAttempt.delivery_id == delivery.id
+        )
     )
-    attempt = result.one()
+
     assert attempt.trigger == DeliveryTrigger.MANUAL_REPLAY
     assert attempt.result == DeliveryAttemptResult.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_manual_replay_rejects_delivery_from_inaccessible_workspace(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+
+    foreign_workspace = await create_workspace(
+        db,
+        name="Foreign Workspace",
+    )
+
+    delivery = await create_delivery(
+        db,
+        DeliveryStatus.FAILED,
+        workspace=foreign_workspace,
+    )
+
+    with pytest.raises(DeliveryNotFoundError):
+        await queue_manual_replay(
+            db,
+            delivery.id,
+            user.id,
+        )
+
+    await db.refresh(delivery)
+
+    assert delivery.status == DeliveryStatus.FAILED
+    assert delivery.failure_type is not None
+
+
+@pytest.mark.asyncio
+async def test_manual_replay_membership_in_other_workspace_does_not_grant_access(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+
+    accessible_workspace = await create_workspace(
+        db,
+        name="Accessible",
+    )
+    foreign_workspace = await create_workspace(
+        db,
+        name="Foreign",
+    )
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=accessible_workspace,
+        role=WorkspaceRole.OWNER,
+    )
+
+    delivery = await create_delivery(
+        db,
+        DeliveryStatus.FAILED,
+        workspace=foreign_workspace,
+    )
+
+    with pytest.raises(DeliveryNotFoundError):
+        await queue_manual_replay(
+            db,
+            delivery.id,
+            user.id,
+        )

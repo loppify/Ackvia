@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,16 +16,18 @@ from app.database.models import (
     Destination,
     FailureType,
     Form,
-    Submission,
+    Submission, WorkspaceRole,
 )
+from app.database.queries.deliveries import get_accessible_delivery_by_id
 from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
     claim_next_delivery,
     finish_delivery_attempt,
-    process_delivery,
+    process_delivery, DeliveryNotFoundError, queue_manual_replay,
 )
 from app.workers.delivery import recovery_stale_deliveries
-from tests.conftest import create_delivery, create_form
+from tests.conftest import create_delivery, create_form, create_submission, create_user, create_workspace, \
+    create_membership, register_and_get_user, create_authenticated_workspace
 
 
 @pytest.mark.asyncio
@@ -633,7 +636,28 @@ async def test_recovered_delivery_can_be_claimed(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_delivery(db: AsyncSession, client):
-    delivery = await create_delivery(db)
+    user = await register_and_get_user(
+        client,
+        db,
+    )
+
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    form = await create_form(
+        db,
+        workspace=workspace,
+    )
+    db.add(form)
+    await db.commit()
+
+    delivery = await create_delivery(db, workspace=workspace)
     response = await client.get(f"/api/deliveries/{delivery.id}")
 
     assert response.status_code == 200
@@ -643,7 +667,28 @@ async def test_get_delivery_returns_delivery(db: AsyncSession, client):
 
 @pytest.mark.asyncio
 async def test_get_delivery_returns_attempts(db: AsyncSession, client):
-    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
+    user = await register_and_get_user(
+        client,
+        db,
+    )
+
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    form = await create_form(
+        db,
+        workspace=workspace,
+    )
+    db.add(form)
+    await db.commit()
+
+    delivery = await create_delivery(db, DeliveryStatus.PROCESSING, workspace=workspace)
     attempt = DeliveryAttempt(
         delivery=delivery,
         result=DeliveryAttemptResult.RETRYABLE_FAILURE,
@@ -657,15 +702,453 @@ async def test_get_delivery_returns_attempts(db: AsyncSession, client):
 
     response = await client.get(f"/api/deliveries/{delivery.id}")
     data = response.json()
+
     assert response.status_code == 200
     assert data["attempt_count"] == 1
     assert (
-        data["attempts"][0]["result"]
-        == DeliveryAttemptResult.RETRYABLE_FAILURE.value
+            data["attempts"][0]["result"] == DeliveryAttemptResult.RETRYABLE_FAILURE.value
     )
 
 
 @pytest.mark.asyncio
-async def test_get_delivery_returns_404_when_not_found(client):
+async def test_get_delivery_returns_404_when_not_found(client, db: AsyncSession):
+    await create_authenticated_workspace(
+        client,
+        db,
+    )
+
+    await db.commit()
     response = await client.get("/api/deliveries/999999")
     assert response.status_code == 404
+
+
+async def test_get_accessible_delivery_by_id_returns_delivery_for_member(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    form = await create_form(db, workspace=workspace)
+    db.add(form)
+    await db.flush()
+
+    submission = await create_submission(
+        db,
+        form=form,
+    )
+
+    destination = Destination(
+        form=form,
+        type="telegram",
+        reference="123456",
+    )
+    db.add(destination)
+    await db.flush()
+
+    delivery = Delivery(
+        submission=submission,
+        destination=destination,
+    )
+    db.add(delivery)
+    await db.flush()
+
+    result = await get_accessible_delivery_by_id(
+        db,
+        delivery.id,
+        user.id,
+    )
+
+    assert result is not None
+    assert result.id == delivery.id
+
+
+async def test_get_accessible_delivery_by_id_returns_none_for_foreign_workspace(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+
+    foreign_workspace = await create_workspace(
+        db,
+        name="Foreign",
+    )
+
+    foreign_form = await create_form(
+        db,
+        workspace=foreign_workspace,
+    )
+    db.add(foreign_form)
+    await db.flush()
+
+    submission = await create_submission(
+        db,
+        form=foreign_form,
+    )
+
+    destination = Destination(
+        form=foreign_form,
+        type="telegram",
+        reference="123456",
+    )
+    db.add(destination)
+    await db.flush()
+
+    delivery = Delivery(
+        submission=submission,
+        destination=destination,
+    )
+    db.add(delivery)
+    await db.flush()
+
+    result = await get_accessible_delivery_by_id(
+        db,
+        delivery.id,
+        user.id,
+    )
+
+    assert result is None
+
+
+async def test_get_accessible_delivery_by_id_returns_none_for_unknown_delivery(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+
+    result = await get_accessible_delivery_by_id(
+        db,
+        999999999,
+        user.id,
+    )
+
+    assert result is None
+
+
+async def test_get_delivery_returns_accessible_delivery(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    user = await register_and_get_user(client, db)
+
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+    )
+
+    form = await create_form(db, workspace=workspace)
+    db.add(form)
+    await db.flush()
+
+    submission = await create_submission(db, form=form)
+
+    destination = Destination(
+        form=form,
+        type="telegram",
+        reference="123456",
+    )
+    db.add(destination)
+    await db.flush()
+
+    delivery = Delivery(
+        submission=submission,
+        destination=destination,
+    )
+    db.add(delivery)
+
+    await db.commit()
+
+    response = await client.get(
+        f"/api/deliveries/{delivery.id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == delivery.id
+
+
+@pytest.mark.asyncio
+async def test_get_delivery_hides_foreign_workspace_delivery(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    await create_authenticated_workspace(client, db)
+
+    foreign_workspace = await create_workspace(db, name="Foreign")
+    delivery = await create_delivery(
+        db,
+        workspace=foreign_workspace,
+    )
+
+    response = await client.get(
+        f"/api/deliveries/{delivery.id}"
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_delivery_requires_authentication(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    workspace = await create_workspace(db)
+    delivery = await create_delivery(
+        db,
+        workspace=workspace,
+    )
+
+    client.cookies.clear()
+
+    response = await client.get(
+        f"/api/deliveries/{delivery.id}"
+    )
+
+    assert response.status_code == 401
+
+
+async def test_manual_replay_allows_workspace_member(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    form = await create_form(
+        db,
+        workspace=workspace,
+    )
+    db.add(form)
+    await db.flush()
+
+    submission = await create_submission(
+        db,
+        form=form,
+    )
+
+    destination = Destination(
+        form=form,
+        type="telegram",
+        reference="123456",
+    )
+    db.add(destination)
+    await db.flush()
+
+    delivery = Delivery(
+        submission=submission,
+        destination=destination,
+        status=DeliveryStatus.FAILED,
+        failure_type=FailureType.PERMANENT,
+    )
+    db.add(delivery)
+    await db.flush()
+
+    result = await queue_manual_replay(
+        db,
+        delivery.id,
+        user.id,
+    )
+
+    assert result.id == delivery.id
+    assert result.status == DeliveryStatus.PENDING
+    assert result.queued_trigger == DeliveryTrigger.MANUAL_REPLAY
+
+
+async def test_manual_replay_rejects_foreign_workspace_delivery(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+
+    foreign_workspace = await create_workspace(
+        db,
+        name="Foreign",
+    )
+
+    foreign_form = await create_form(
+        db,
+        workspace=foreign_workspace,
+    )
+    db.add(foreign_form)
+    await db.flush()
+
+    submission = await create_submission(
+        db,
+        form=foreign_form,
+    )
+
+    destination = Destination(
+        form=foreign_form,
+        type="telegram",
+        reference="123456",
+    )
+    db.add(destination)
+    await db.flush()
+
+    delivery = Delivery(
+        submission=submission,
+        destination=destination,
+        status=DeliveryStatus.FAILED,
+        failure_type=FailureType.PERMANENT,
+    )
+    db.add(delivery)
+    await db.flush()
+
+    with pytest.raises(DeliveryNotFoundError):
+        await queue_manual_replay(
+            db,
+            delivery.id,
+            user.id,
+        )
+
+
+async def test_rejected_foreign_replay_preserves_delivery(
+        db: AsyncSession,
+):
+    user = await create_user(db)
+
+    workspace = await create_workspace(db)
+
+    form = await create_form(
+        db,
+        workspace=workspace,
+    )
+    db.add(form)
+    await db.flush()
+
+    submission = await create_submission(
+        db,
+        form=form,
+    )
+
+    destination = Destination(
+        form=form,
+        type="telegram",
+        reference="123456",
+    )
+    db.add(destination)
+    await db.flush()
+
+    delivery = Delivery(
+        submission=submission,
+        destination=destination,
+        status=DeliveryStatus.FAILED,
+        failure_type=FailureType.PERMANENT,
+        last_error="Telegram rejected request",
+    )
+    db.add(delivery)
+    await db.flush()
+
+    with pytest.raises(DeliveryNotFoundError):
+        await queue_manual_replay(
+            db,
+            delivery.id,
+            user.id,
+        )
+
+    await db.refresh(delivery)
+
+    assert delivery.status == DeliveryStatus.FAILED
+    assert delivery.failure_type == FailureType.PERMANENT
+    assert delivery.last_error == "Telegram rejected request"
+
+
+async def test_replay_foreign_delivery_returns_404(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    await register_and_get_user(client, db)
+
+    foreign_workspace = await create_workspace(
+        db,
+        name="Foreign",
+    )
+
+    foreign_form = await create_form(
+        db,
+        workspace=foreign_workspace,
+    )
+    db.add(foreign_form)
+    await db.flush()
+
+    submission = await create_submission(
+        db,
+        form=foreign_form,
+    )
+
+    destination = Destination(
+        form=foreign_form,
+        type="telegram",
+        reference="123456",
+    )
+    db.add(destination)
+    await db.flush()
+
+    delivery = Delivery(
+        submission=submission,
+        destination=destination,
+        status=DeliveryStatus.FAILED,
+        failure_type=FailureType.PERMANENT,
+    )
+    db.add(delivery)
+
+    await db.commit()
+
+    response = await client.post(
+        f"/api/deliveries/{delivery.id}/replay"
+    )
+
+    assert response.status_code == 404
+
+
+async def test_replay_requires_authentication(
+        db: AsyncSession,
+        client: AsyncClient,
+):
+    workspace = await create_workspace(db)
+
+    form = await create_form(
+        db,
+        workspace=workspace,
+    )
+    db.add(form)
+    await db.flush()
+
+    submission = await create_submission(db, form=form)
+
+    destination = Destination(
+        form=form,
+        type="telegram",
+        reference="123456",
+    )
+    db.add(destination)
+    await db.flush()
+
+    delivery = Delivery(
+        submission=submission,
+        destination=destination,
+        status=DeliveryStatus.FAILED,
+        failure_type=FailureType.PERMANENT,
+    )
+    db.add(delivery)
+
+    await db.commit()
+
+    client.cookies.clear()
+
+    response = await client.post(
+        f"/api/deliveries/{delivery.id}/replay"
+    )
+
+    assert response.status_code == 401

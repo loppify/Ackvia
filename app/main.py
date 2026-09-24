@@ -6,11 +6,12 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.api.auth import router as auth_router
 from app.api.deliveries import router as deliveries_router
 from app.api.forms import router as forms_router
 from app.api.ingest import router as ingest_router
 from app.api.submissions import router as submissions_router
-from app.api.auth import router as auth_router
+from app.api.workspaces import router as workspaces_router
 from app.core.i18n import (
     SUPPORTED_LANGUAGES,
     get_locale,
@@ -34,11 +35,12 @@ app.include_router(ingest_router)
 app.include_router(submissions_router)
 app.include_router(deliveries_router)
 app.include_router(auth_router)
+app.include_router(workspaces_router)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def render_index(
-        request: Request, locale: Annotated[tuple[str, dict[str, str]], Depends(get_locale)]
+    request: Request, locale: Annotated[tuple[str, dict[str, str]], Depends(get_locale)]
 ):
     language, translations = locale
 
@@ -65,7 +67,7 @@ async def render_index(
 
 @app.get("/success", response_class=HTMLResponse)
 async def render_success(
-        request: Request, locale: Annotated[tuple[str, dict[str, str]], Depends(get_locale)]
+    request: Request, locale: Annotated[tuple[str, dict[str, str]], Depends(get_locale)]
 ):
     language, translations = locale
 

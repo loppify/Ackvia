@@ -20,6 +20,7 @@ from app.database.models import (
     Form,
     Submission,
 )
+from app.database.queries.deliveries import get_accessible_delivery_by_id, get_delivery_for_processing
 from app.services.telegram import format_submission_message, send_telegram_alert
 
 MAX_DELIVERY_ATTEMPTS = 5
@@ -63,20 +64,6 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
     return delivery
 
 
-async def get_delivery_for_processing(
-    db: AsyncSession, delivery_id: int
-) -> Delivery | None:
-    result = await db.execute(
-        select(Delivery)
-        .where(Delivery.id == delivery_id)
-        .options(
-            selectinload(Delivery.destination),
-            selectinload(Delivery.submission).selectinload(Submission.form),
-        )
-    )
-    return result.scalar_one_or_none()
-
-
 async def start_attempt(db: AsyncSession, delivery: Delivery):
     delivery_attempt = DeliveryAttempt(
         delivery=delivery, trigger=delivery.queued_trigger
@@ -84,7 +71,6 @@ async def start_attempt(db: AsyncSession, delivery: Delivery):
     delivery.attempt_count += 1
     db.add(delivery_attempt)
     await db.commit()
-    await db.refresh(delivery_attempt)
 
     return delivery_attempt
 
@@ -95,7 +81,7 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 
 
 async def finish_delivery_attempt(
-    db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
+        db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
     log = logger.bind(
         delivery_id=delivery.id,
@@ -163,7 +149,7 @@ async def finish_delivery_attempt(
             log.info("Delivery result unknown")
 
     try:
-        await db.commit()
+        await db.flush()
     except IntegrityError:
         await db.rollback()
         log.exception("Failed to commit delivery attempt")
@@ -289,14 +275,14 @@ class DeliveryNotFoundError(Exception): ...
 class DeliveryNotReplayableError(Exception): ...
 
 
-async def manual_delivery(delivery_id, db: AsyncSession):
-    delivery = await db.get(Delivery, delivery_id)
+async def queue_manual_replay(db: AsyncSession, delivery_id, user_id) -> Delivery:
+    delivery = await get_accessible_delivery_by_id(db, delivery_id, user_id)
 
     if delivery is None:
         raise DeliveryNotFoundError
     if delivery.status not in (
-        DeliveryStatus.FAILED,
-        DeliveryStatus.UNKNOWN,
+            DeliveryStatus.FAILED,
+            DeliveryStatus.UNKNOWN,
     ):
         raise DeliveryNotReplayableError
 
@@ -305,6 +291,5 @@ async def manual_delivery(delivery_id, db: AsyncSession):
     delivery.failure_type = None
     delivery.next_retry_at = None
     delivery.processing_started_at = None
-    await db.commit()
-    await db.refresh(delivery)
+    await db.flush()
     return delivery

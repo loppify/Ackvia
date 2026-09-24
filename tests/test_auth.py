@@ -5,13 +5,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Session, User
-from app.services.auth import get_user_by_session_token, login_user, InvalidCredentialsError, logout_session
 from app.services.auth import (
+    InvalidCredentialsError,
     UserAlreadyExistsError,
     create_session,
     generate_session_token,
+    get_user_by_session_token,
     hash_password,
     hash_session_token,
+    login_user,
+    logout_session,
     register_user,
     verify_password,
 )
@@ -109,9 +112,7 @@ async def test_create_session_stores_hashed_token(db: AsyncSession):
 
     token = await create_session(db, user)
 
-    result = await db.execute(
-        select(Session).where(Session.user_id == user.id)
-    )
+    result = await db.execute(select(Session).where(Session.user_id == user.id))
     session = result.scalar_one()
 
     assert token
@@ -130,9 +131,7 @@ async def test_create_session_sets_expiration(db: AsyncSession):
 
     after = datetime.now(UTC)
 
-    result = await db.execute(
-        select(Session).where(Session.user_id == user.id)
-    )
+    result = await db.execute(select(Session).where(Session.user_id == user.id))
     session = result.scalar_one()
 
     assert before + timedelta(days=30) <= session.expires_at
@@ -153,7 +152,7 @@ async def test_get_user_by_session_token_returns_user(db: AsyncSession):
 
 
 async def test_get_user_by_session_token_returns_none_for_unknown_token(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     result = await get_user_by_session_token(
         db,
@@ -164,7 +163,7 @@ async def test_get_user_by_session_token_returns_none_for_unknown_token(
 
 
 async def test_get_user_by_session_token_rejects_expired_session(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     user = User(email="test@example.com")
     db.add(user)
@@ -192,9 +191,7 @@ async def test_register_user_creates_user(db: AsyncSession):
         "strong-password",
     )
 
-    stored_user = await db.scalar(
-        select(User).where(User.id == user.id)
-    )
+    stored_user = await db.scalar(select(User).where(User.id == user.id))
 
     assert stored_user is not None
     assert stored_user.email == "test@example.com"
@@ -240,7 +237,7 @@ async def test_register_user_rejects_duplicate_email(db: AsyncSession):
 
 
 async def test_register_user_rejects_duplicate_normalized_email(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     await register_user(
         db,
@@ -275,9 +272,7 @@ async def test_login_user_returns_user_and_session_token(db: AsyncSession):
     assert isinstance(user, User)
     assert token
 
-    session = await db.scalar(
-        select(Session).where(Session.user_id == user.id)
-    )
+    session = await db.scalar(select(Session).where(Session.user_id == user.id))
 
     assert session is not None
     assert session.token_hash == hash_session_token(token)
@@ -352,16 +347,14 @@ async def test_logout_session_deletes_session(db: AsyncSession):
     await logout_session(db, token)
 
     session = await db.scalar(
-        select(Session).where(
-            Session.token_hash == hash_session_token(token)
-        )
+        select(Session).where(Session.token_hash == hash_session_token(token))
     )
 
     assert session is None
 
 
 async def test_logout_session_does_not_delete_other_sessions(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     user = await register_user(
         db,
@@ -375,14 +368,10 @@ async def test_logout_session_does_not_delete_other_sessions(
     await logout_session(db, first_token)
 
     first_session = await db.scalar(
-        select(Session).where(
-            Session.token_hash == hash_session_token(first_token)
-        )
+        select(Session).where(Session.token_hash == hash_session_token(first_token))
     )
     second_session = await db.scalar(
-        select(Session).where(
-            Session.token_hash == hash_session_token(second_token)
-        )
+        select(Session).where(Session.token_hash == hash_session_token(second_token))
     )
 
     assert first_session is None
@@ -390,7 +379,7 @@ async def test_logout_session_does_not_delete_other_sessions(
 
 
 async def test_logout_session_accepts_unknown_token(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     await logout_session(
         db,
@@ -646,7 +635,7 @@ async def test_me_rejects_expired_session(client, db: AsyncSession):
         password_hash=hash_password("strong-password"),
     )
     db.add(user)
-    await db.flush()
+    await db.commit()
 
     token = generate_session_token()
 
@@ -656,7 +645,7 @@ async def test_me_rejects_expired_session(client, db: AsyncSession):
         expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
     db.add(session)
-    await db.flush()
+    await db.commit()
 
     client.cookies.set(
         "ackvia_session",
@@ -716,9 +705,7 @@ async def test_logout_without_session_is_idempotent(client):
 
 
 async def test_logout_with_invalid_session_is_idempotent(client):
-    client.cookies.set("invalid_session_token",
-                       "ackvia_session",
-                       path="/")
+    client.cookies.set("invalid_session_token", "ackvia_session", path="/")
 
     response = await client.post("/api/auth/logout")
 

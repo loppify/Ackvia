@@ -15,8 +15,12 @@ from app.database.models import (
     FailureType,
     Form,
     Submission,
+    User,
     Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
 )
+from app.database.queries.auth import get_user_by_email
 from app.database.session import get_db
 from app.main import app
 
@@ -44,8 +48,8 @@ async def client():
     transport = ASGITransport(app=app)
 
     async with AsyncClient(
-            transport=transport,
-            base_url="https://test",
+        transport=transport,
+        base_url="https://test",
     ) as client:
         yield client
 
@@ -86,13 +90,14 @@ async def db():
 
 
 async def create_form(
-        db: AsyncSession,
-        *,
-        title: str = "Test form",
-        language: str = "en",
-        created_at=None,
+    db: AsyncSession,
+    *,
+    title: str = "Test form",
+    language: str = "en",
+    workspace: Workspace | None = None,
+    created_at=None,
 ) -> Form:
-    workspace = Workspace(name="Test Workspace")
+    workspace = Workspace(name="Test Workspace") if workspace is None else workspace
     form = Form(title=title, language=language, workspace=workspace)
 
     if created_at is not None:
@@ -102,10 +107,11 @@ async def create_form(
 
 
 async def create_delivery(
-        db: AsyncSession,
-        status: DeliveryStatus = DeliveryStatus.PENDING,
+    db: AsyncSession,
+    status: DeliveryStatus = DeliveryStatus.PENDING,
+    workspace: Workspace | None = None,
 ) -> Delivery:
-    form = await create_form(db)
+    form = await create_form(db, workspace=workspace)
     destination = Destination(
         form=form,
         type="telegram",
@@ -128,3 +134,106 @@ async def create_delivery(
     db.add(form)
     await db.commit()
     return delivery
+
+
+async def create_user(
+    db: AsyncSession,
+    *,
+    email: str = "user@example.com",
+) -> User:
+    user = User(email=email)
+    db.add(user)
+    await db.flush()
+    return user
+
+
+async def create_workspace(
+    db: AsyncSession,
+    *,
+    name: str = "Test Workspace",
+) -> Workspace:
+    workspace = Workspace(name=name)
+    db.add(workspace)
+    await db.flush()
+    return workspace
+
+
+async def create_membership(
+    db: AsyncSession,
+    *,
+    user: User,
+    workspace: Workspace,
+    role: WorkspaceRole = WorkspaceRole.MEMBER,
+) -> WorkspaceMembership:
+    membership = WorkspaceMembership(
+        user=user,
+        workspace=workspace,
+        role=role,
+    )
+    db.add(membership)
+    await db.flush()
+    return membership
+
+
+async def register_and_get_user(
+    client: AsyncClient,
+    db: AsyncSession,
+    *,
+    email: str = "user@example.com",
+    password: str = "strong-password",
+) -> User:
+    response = await client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+
+    assert response.status_code == 201
+
+    user = await get_user_by_email(db, email)
+    assert user is not None
+
+    return user
+
+
+async def create_submission(
+    db: AsyncSession,
+    *,
+    form: Form,
+    payload: dict | None = None,
+) -> Submission:
+    submission = Submission(
+        form=form,
+        payload=payload or {"name": "Test User"},
+    )
+    db.add(submission)
+    await db.flush()
+
+    return submission
+
+
+async def create_authenticated_workspace(
+    client: AsyncClient,
+    db: AsyncSession,
+    *,
+    email: str = "user@example.com",
+    role: WorkspaceRole = WorkspaceRole.OWNER,
+) -> tuple[User, Workspace]:
+    user = await register_and_get_user(
+        client,
+        db,
+        email=email,
+    )
+
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=role,
+    )
+
+    return user, workspace
