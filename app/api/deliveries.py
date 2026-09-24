@@ -17,9 +17,9 @@ router = APIRouter(prefix="/api/deliveries", tags=["deliveries"])
 
 @router.get("/{delivery_id}", response_model=DeliveryDetailRead)
 async def get_detailed_delivery(
-        delivery_id: int,
-        db: AsyncSession = Depends(get_db),
-        user: User = Depends(get_current_user)
+    delivery_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     res = await get_accessible_delivery_by_id(db, delivery_id, user_id=user.id)
 
@@ -37,8 +37,11 @@ async def get_detailed_delivery(
     response_model=DeliveryDetailRead,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def replay_delivery(delivery_id: int, db: AsyncSession = Depends(get_db),
-                          user: User = Depends(get_current_user)):
+async def replay_delivery(
+    delivery_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     try:
         delivery = await queue_manual_replay(db, delivery_id, user.id)
     except DeliveryNotFoundError:

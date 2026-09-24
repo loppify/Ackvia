@@ -6,7 +6,6 @@ from loguru import logger
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.i18n import load_translations
 from app.database.models import (
@@ -18,9 +17,11 @@ from app.database.models import (
     Destination,
     FailureType,
     Form,
-    Submission,
 )
-from app.database.queries.deliveries import get_accessible_delivery_by_id, get_delivery_for_processing
+from app.database.queries.deliveries import (
+    get_accessible_delivery_by_id,
+    get_delivery_for_processing,
+)
 from app.services.telegram import format_submission_message, send_telegram_alert
 
 MAX_DELIVERY_ATTEMPTS = 5
@@ -81,7 +82,7 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 
 
 async def finish_delivery_attempt(
-        db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
+    db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
     log = logger.bind(
         delivery_id=delivery.id,
@@ -281,8 +282,8 @@ async def queue_manual_replay(db: AsyncSession, delivery_id, user_id) -> Deliver
     if delivery is None:
         raise DeliveryNotFoundError
     if delivery.status not in (
-            DeliveryStatus.FAILED,
-            DeliveryStatus.UNKNOWN,
+        DeliveryStatus.FAILED,
+        DeliveryStatus.UNKNOWN,
     ):
         raise DeliveryNotReplayableError
 

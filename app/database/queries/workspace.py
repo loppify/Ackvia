@@ -29,3 +29,13 @@ async def get_user_workspaces(db: AsyncSession, user_id: uuid.UUID) -> list[Work
         .where(WorkspaceMembership.user_id == user_id)
     )
     return [wm for wm in workspace_memberships.scalars()]
+
+
+async def get_accessible_workspace_by_id(
+    db: AsyncSession, user_id: uuid.UUID, workspace_id: uuid.UUID
+) -> Workspace | None:
+    return await db.scalar(
+        select(Workspace)
+        .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
+        .where(Workspace.id == workspace_id, WorkspaceMembership.user_id == user_id)
+    )

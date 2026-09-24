@@ -16,18 +16,29 @@ from app.database.models import (
     Destination,
     FailureType,
     Form,
-    Submission, WorkspaceRole,
+    Submission,
+    WorkspaceRole,
 )
 from app.database.queries.deliveries import get_accessible_delivery_by_id
 from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
+    DeliveryNotFoundError,
     claim_next_delivery,
     finish_delivery_attempt,
-    process_delivery, DeliveryNotFoundError, queue_manual_replay,
+    process_delivery,
+    queue_manual_replay,
 )
 from app.workers.delivery import recovery_stale_deliveries
-from tests.conftest import create_delivery, create_form, create_submission, create_user, create_workspace, \
-    create_membership, register_and_get_user, create_authenticated_workspace
+from tests.conftest import (
+    create_authenticated_workspace,
+    create_delivery,
+    create_form,
+    create_membership,
+    create_submission,
+    create_user,
+    create_workspace,
+    register_and_get_user,
+)
 
 
 @pytest.mark.asyncio
@@ -75,7 +86,7 @@ async def test_delivery_creation(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_new_delivery_starts_pending_without_attempts(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     form = await create_form(
         db,
@@ -156,7 +167,7 @@ async def test_duplicate_delivery_failure(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_delivery_states_are_independent(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     form = await create_form(
         db,
@@ -238,8 +249,8 @@ async def test_delivery_states_are_independent(
     ],
 )
 async def test_delivery_status_is_persisted(
-        db: AsyncSession,
-        status: DeliveryStatus,
+    db: AsyncSession,
+    status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -254,7 +265,7 @@ async def test_delivery_status_is_persisted(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_can_be_selected_when_due(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -279,7 +290,7 @@ async def test_awaiting_retry_delivery_can_be_selected_when_due(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_is_not_selected_before_due(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -304,7 +315,7 @@ async def test_awaiting_retry_delivery_is_not_selected_before_due(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_schedules_retry(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -346,7 +357,7 @@ async def test_retryable_failure_schedules_retry(
 
 @pytest.mark.asyncio
 async def test_retry_delay_increases_with_attempt_count(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -382,7 +393,7 @@ async def test_retry_delay_increases_with_attempt_count(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_exhausts_retries(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -445,7 +456,7 @@ async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatc
 
 @pytest.mark.asyncio
 async def test_unexpected_exception_respects_max_attempts(
-        db: AsyncSession, monkeypatch
+    db: AsyncSession, monkeypatch
 ):
     async def fake_execute_delivery_attempt(destination, message):
         raise RuntimeError("Test Failure")
@@ -706,7 +717,7 @@ async def test_get_delivery_returns_attempts(db: AsyncSession, client):
     assert response.status_code == 200
     assert data["attempt_count"] == 1
     assert (
-            data["attempts"][0]["result"] == DeliveryAttemptResult.RETRYABLE_FAILURE.value
+        data["attempts"][0]["result"] == DeliveryAttemptResult.RETRYABLE_FAILURE.value
     )
 
 
@@ -723,7 +734,7 @@ async def test_get_delivery_returns_404_when_not_found(client, db: AsyncSession)
 
 
 async def test_get_accessible_delivery_by_id_returns_delivery_for_member(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     user = await create_user(db)
     workspace = await create_workspace(db)
@@ -770,7 +781,7 @@ async def test_get_accessible_delivery_by_id_returns_delivery_for_member(
 
 
 async def test_get_accessible_delivery_by_id_returns_none_for_foreign_workspace(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -816,7 +827,7 @@ async def test_get_accessible_delivery_by_id_returns_none_for_foreign_workspace(
 
 
 async def test_get_accessible_delivery_by_id_returns_none_for_unknown_delivery(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -830,8 +841,8 @@ async def test_get_accessible_delivery_by_id_returns_none_for_unknown_delivery(
 
 
 async def test_get_delivery_returns_accessible_delivery(
-        db: AsyncSession,
-        client: AsyncClient,
+    db: AsyncSession,
+    client: AsyncClient,
 ):
     user = await register_and_get_user(client, db)
 
@@ -865,9 +876,7 @@ async def test_get_delivery_returns_accessible_delivery(
 
     await db.commit()
 
-    response = await client.get(
-        f"/api/deliveries/{delivery.id}"
-    )
+    response = await client.get(f"/api/deliveries/{delivery.id}")
 
     assert response.status_code == 200
     assert response.json()["id"] == delivery.id
@@ -875,8 +884,8 @@ async def test_get_delivery_returns_accessible_delivery(
 
 @pytest.mark.asyncio
 async def test_get_delivery_hides_foreign_workspace_delivery(
-        db: AsyncSession,
-        client: AsyncClient,
+    db: AsyncSession,
+    client: AsyncClient,
 ):
     await create_authenticated_workspace(client, db)
 
@@ -886,17 +895,15 @@ async def test_get_delivery_hides_foreign_workspace_delivery(
         workspace=foreign_workspace,
     )
 
-    response = await client.get(
-        f"/api/deliveries/{delivery.id}"
-    )
+    response = await client.get(f"/api/deliveries/{delivery.id}")
 
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_get_delivery_requires_authentication(
-        db: AsyncSession,
-        client: AsyncClient,
+    db: AsyncSession,
+    client: AsyncClient,
 ):
     workspace = await create_workspace(db)
     delivery = await create_delivery(
@@ -906,15 +913,13 @@ async def test_get_delivery_requires_authentication(
 
     client.cookies.clear()
 
-    response = await client.get(
-        f"/api/deliveries/{delivery.id}"
-    )
+    response = await client.get(f"/api/deliveries/{delivery.id}")
 
     assert response.status_code == 401
 
 
 async def test_manual_replay_allows_workspace_member(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     user = await create_user(db)
     workspace = await create_workspace(db)
@@ -967,7 +972,7 @@ async def test_manual_replay_allows_workspace_member(
 
 
 async def test_manual_replay_rejects_foreign_workspace_delivery(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -1014,7 +1019,7 @@ async def test_manual_replay_rejects_foreign_workspace_delivery(
 
 
 async def test_rejected_foreign_replay_preserves_delivery(
-        db: AsyncSession,
+    db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -1065,8 +1070,8 @@ async def test_rejected_foreign_replay_preserves_delivery(
 
 
 async def test_replay_foreign_delivery_returns_404(
-        db: AsyncSession,
-        client: AsyncClient,
+    db: AsyncSession,
+    client: AsyncClient,
 ):
     await register_and_get_user(client, db)
 
@@ -1105,16 +1110,14 @@ async def test_replay_foreign_delivery_returns_404(
 
     await db.commit()
 
-    response = await client.post(
-        f"/api/deliveries/{delivery.id}/replay"
-    )
+    response = await client.post(f"/api/deliveries/{delivery.id}/replay")
 
     assert response.status_code == 404
 
 
 async def test_replay_requires_authentication(
-        db: AsyncSession,
-        client: AsyncClient,
+    db: AsyncSession,
+    client: AsyncClient,
 ):
     workspace = await create_workspace(db)
 
@@ -1147,8 +1150,6 @@ async def test_replay_requires_authentication(
 
     client.cookies.clear()
 
-    response = await client.post(
-        f"/api/deliveries/{delivery.id}/replay"
-    )
+    response = await client.post(f"/api/deliveries/{delivery.id}/replay")
 
     assert response.status_code == 401

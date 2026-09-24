@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Form, Submission, Workspace, WorkspaceRole
@@ -965,3 +966,148 @@ async def test_get_form_submissions_requires_authentication(
     response = await client.get(f"/api/forms/{form.id}/submissions")
 
     assert response.status_code == 401
+
+
+async def test_create_form_requires_authentication(
+    db: AsyncSession,
+    client: AsyncClient,
+):
+    workspace = await create_workspace(db)
+    await db.commit()
+
+    client.cookies.clear()
+
+    response = await client.post(
+        "/api/forms",
+        json={
+            "workspace_id": str(workspace.id),
+            "title": "Contact",
+            "language": "en",
+            "destinations": [],
+        },
+    )
+
+    assert response.status_code == 401
+
+
+async def test_create_form_in_accessible_workspace(
+    db: AsyncSession,
+    client: AsyncClient,
+):
+    user = await register_and_get_user(client, db)
+
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    await db.commit()
+
+    response = await client.post(
+        "/api/forms",
+        json={
+            "workspace_id": str(workspace.id),
+            "title": "Contact",
+            "language": "en",
+            "destinations": [],
+        },
+    )
+
+    assert response.status_code == 201
+
+    form_id = uuid.UUID(response.json()["id"])
+
+    form = await db.get(Form, form_id)
+
+    assert form is not None
+    assert form.workspace_id == workspace.id
+
+
+async def test_create_form_rejects_foreign_workspace(
+    db: AsyncSession,
+    client: AsyncClient,
+):
+    await register_and_get_user(client, db)
+
+    foreign_workspace = await create_workspace(
+        db,
+        name="Foreign",
+    )
+
+    await db.commit()
+
+    response = await client.post(
+        "/api/forms",
+        json={
+            "workspace_id": str(foreign_workspace.id),
+            "title": "Injected Form",
+            "language": "en",
+            "destinations": [],
+        },
+    )
+
+    assert response.status_code == 404
+
+
+async def test_rejected_foreign_form_creation_does_not_create_form(
+    db: AsyncSession,
+    client: AsyncClient,
+):
+    await register_and_get_user(client, db)
+
+    foreign_workspace = await create_workspace(
+        db,
+        name="Foreign",
+    )
+
+    await db.commit()
+
+    response = await client.post(
+        "/api/forms",
+        json={
+            "workspace_id": str(foreign_workspace.id),
+            "title": "Should Not Exist",
+            "language": "en",
+            "destinations": [],
+        },
+    )
+
+    assert response.status_code == 404
+
+    form = await db.scalar(select(Form).where(Form.title == "Should Not Exist"))
+
+    assert form is None
+
+
+async def test_member_can_create_form(
+    db: AsyncSession,
+    client: AsyncClient,
+):
+    user = await register_and_get_user(client, db)
+
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    await db.commit()
+
+    response = await client.post(
+        "/api/forms",
+        json={
+            "workspace_id": str(workspace.id),
+            "title": "Member Form",
+            "language": "en",
+            "destinations": [],
+        },
+    )
+
+    assert response.status_code == 201
