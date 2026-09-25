@@ -1,10 +1,12 @@
 import enum
+import uuid
 
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Destination, Form, Workspace
+from app.database.models import Destination, Form
+from app.database.queries.workspace import get_accessible_workspace_by_id
+from app.exceptions import WorkspaceNotFoundError
 
 
 class DestinationType(str, enum.Enum):
@@ -20,13 +22,22 @@ class FormCreate(BaseModel):
     title: str
     language: str = "en"
     destinations: list[DestinationCreate]
+    workspace_id: uuid.UUID
 
 
 async def create_form(
-    db: AsyncSession, title: str, language: str, destinations: list[DestinationCreate]
-):
-    wp = await db.execute(select(Workspace))
-    form = Form(title=title, language=language, workspace=wp.scalar_one())
+    db: AsyncSession,
+    title: str,
+    language: str,
+    destinations: list[DestinationCreate],
+    user_id,
+    workspace_id,
+) -> Form:
+    workspace = await get_accessible_workspace_by_id(db, user_id, workspace_id)
+    if workspace is None:
+        raise WorkspaceNotFoundError
+
+    form = Form(title=title, language=language, workspace=workspace)
 
     for destination_data in destinations:
         destination = Destination(

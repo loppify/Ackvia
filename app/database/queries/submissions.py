@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -8,14 +10,21 @@ from app.database.models import (
     DeliveryTrigger,
     Form,
     Submission,
+    WorkspaceMembership,
 )
 
 
-async def get_detailed_submission_by_id(db: AsyncSession, submission_id: int):
+async def get_accessible_submission_by_id(
+    db: AsyncSession, submission_id: int, user_id: uuid.UUID
+) -> Submission | None:
     return await db.scalar(
         select(Submission)
+        .join(Form, Submission.form_id == Form.id)
+        .join(
+            WorkspaceMembership, Form.workspace_id == WorkspaceMembership.workspace_id
+        )
         .options(selectinload(Submission.deliveries))
-        .where(Submission.id == submission_id)
+        .where(Submission.id == submission_id, WorkspaceMembership.user_id == user_id)
     )
 
 
