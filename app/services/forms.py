@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Destination, Form
 from app.database.queries.workspace import get_accessible_workspace_by_id
+from app.exceptions import WorkspaceNotFoundError
 
 
 class DestinationType(str, enum.Enum):
@@ -24,10 +25,6 @@ class FormCreate(BaseModel):
     workspace_id: uuid.UUID
 
 
-class WorkspaceNotFoundError(Exception):
-    pass
-
-
 async def create_form(
     db: AsyncSession,
     title: str,
@@ -38,7 +35,7 @@ async def create_form(
 ) -> Form:
     workspace = await get_accessible_workspace_by_id(db, user_id, workspace_id)
     if workspace is None:
-        raise WorkspaceNotFoundError()
+        raise WorkspaceNotFoundError
 
     form = Form(title=title, language=language, workspace=workspace)
 

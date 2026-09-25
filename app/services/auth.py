@@ -12,6 +12,7 @@ from app.database.queries.auth import (
     get_session_by_token_hash,
     get_user_by_email,
 )
+from app.exceptions import InvalidCredentialsError, UserAlreadyExistsError
 
 password_hasher = PasswordHasher()
 SESSION_TTL = 30
@@ -55,10 +56,6 @@ async def create_session(db: AsyncSession, user: User) -> str:
     return token
 
 
-class UserAlreadyExistsError(Exception):
-    pass
-
-
 def normalize_email(email: str) -> str:
     return email.strip().lower()
 
@@ -83,10 +80,6 @@ async def get_user_by_session_token(db: AsyncSession, token: str) -> User | None
         return None
 
     return user_session.user
-
-
-class InvalidCredentialsError(Exception):
-    pass
 
 
 async def login_user(db, email, password) -> tuple[User, str]:

@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import Workspace, WorkspaceMembership
+from app.database.models import Workspace, WorkspaceMembership, WorkspaceRole
+from app.exceptions import WorkspaceNotFoundError, WorkspacePermissionDeniedError
 
 
 async def get_workspace_membership_by_user_and_workspace_id(
@@ -39,3 +40,29 @@ async def get_accessible_workspace_by_id(
         .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
         .where(Workspace.id == workspace_id, WorkspaceMembership.user_id == user_id)
     )
+
+
+async def get_workspace_membership(
+    db: AsyncSession, user_id: uuid.UUID, workspace_id: uuid.UUID
+) -> WorkspaceMembership | None:
+    return await db.scalar(
+        select(WorkspaceMembership).where(
+            WorkspaceMembership.workspace_id == workspace_id,
+            WorkspaceMembership.user_id == user_id,
+        )
+    )
+
+
+async def require_workspace_role(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+    allowed_roles: set[WorkspaceRole],
+) -> WorkspaceMembership:
+    workspace_membership = await get_workspace_membership(db, user_id, workspace_id)
+
+    if workspace_membership is None:
+        raise WorkspaceNotFoundError
+    if workspace_membership.role not in allowed_roles:
+        raise WorkspacePermissionDeniedError
+    return workspace_membership

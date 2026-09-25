@@ -13,9 +13,10 @@ from app.database.queries.forms import (
     get_form_submissions_from_db,
 )
 from app.database.session import get_db
+from app.exceptions import WorkspaceNotFoundError
 from app.schemas.forms import FormRead
 from app.schemas.submissions import SubmissionRead
-from app.services.forms import FormCreate, WorkspaceNotFoundError, create_form
+from app.services.forms import FormCreate, create_form
 
 router = APIRouter(prefix="/api/forms", tags=["forms"])
 

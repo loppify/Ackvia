@@ -22,6 +22,7 @@ from app.database.queries.deliveries import (
     get_accessible_delivery_by_id,
     get_delivery_for_processing,
 )
+from app.exceptions import DeliveryNotFoundError, DeliveryNotReplayableError
 from app.services.telegram import format_submission_message, send_telegram_alert
 
 MAX_DELIVERY_ATTEMPTS = 5
@@ -268,12 +269,6 @@ async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
             log.exception("Failed to persist delivery recovery")
             raise
         raise
-
-
-class DeliveryNotFoundError(Exception): ...
-
-
-class DeliveryNotReplayableError(Exception): ...
 
 
 async def queue_manual_replay(db: AsyncSession, delivery_id, user_id) -> Delivery:

@@ -7,10 +7,7 @@ from app.database.queries.workspace import (
     get_user_workspaces,
     get_workspace_membership_by_user_and_workspace_id,
 )
-
-
-class WorkspaceAccessDeniedError(Exception):
-    pass
+from app.exceptions import WorkspaceAccessDeniedError
 
 
 async def get_user_workspace(

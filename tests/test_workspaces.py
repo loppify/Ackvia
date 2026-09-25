@@ -3,11 +3,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User, Workspace, WorkspaceMembership, WorkspaceRole
 from app.database.queries.auth import get_user_by_email
-from app.services.workspace import (
+from app.database.queries.workspace import (
+    get_workspace_membership,
+    require_workspace_role,
+)
+from app.exceptions import (
     WorkspaceAccessDeniedError,
+    WorkspaceNotFoundError,
+    WorkspacePermissionDeniedError,
+)
+from app.services.workspace import (
     get_user_workspace,
     list_user_workspaces,
 )
+from tests.conftest import create_membership, create_user, create_workspace
 
 
 async def test_get_user_workspace_returns_workspace_for_owner(
@@ -267,3 +276,128 @@ async def test_list_workspaces_does_not_expose_other_users_workspace(
 
     assert "Visible" in names
     assert "Secret" not in names
+
+
+async def test_get_workspace_membership_returns_membership(
+    db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    membership = await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    result = await get_workspace_membership(
+        db,
+        user.id,
+        workspace.id,
+    )
+
+    assert result is not None
+    assert result.id == membership.id
+    assert result.role == WorkspaceRole.MEMBER
+
+
+async def test_get_workspace_membership_returns_none_without_membership(
+    db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    result = await get_workspace_membership(
+        db,
+        user.id,
+        workspace.id,
+    )
+
+    assert result is None
+
+
+async def test_require_workspace_role_allows_owner(
+    db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    membership = await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.OWNER,
+    )
+
+    result = await require_workspace_role(
+        db,
+        user.id,
+        workspace.id,
+        {WorkspaceRole.OWNER},
+    )
+
+    assert result.id == membership.id
+
+
+async def test_require_workspace_role_rejects_member_for_owner_only_operation(
+    db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    with pytest.raises(WorkspacePermissionDeniedError):
+        await require_workspace_role(
+            db,
+            user.id,
+            workspace.id,
+            {WorkspaceRole.OWNER},
+        )
+
+
+async def test_require_workspace_role_allows_multiple_roles(
+    db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    membership = await create_membership(
+        db,
+        user=user,
+        workspace=workspace,
+        role=WorkspaceRole.MEMBER,
+    )
+
+    result = await require_workspace_role(
+        db,
+        user.id,
+        workspace.id,
+        {
+            WorkspaceRole.OWNER,
+            WorkspaceRole.MEMBER,
+        },
+    )
+
+    assert result.id == membership.id
+
+
+async def test_require_workspace_role_hides_inaccessible_workspace(
+    db: AsyncSession,
+):
+    user = await create_user(db)
+    workspace = await create_workspace(db)
+
+    with pytest.raises(WorkspaceNotFoundError):
+        await require_workspace_role(
+            db,
+            user.id,
+            workspace.id,
+            {WorkspaceRole.OWNER},
+        )
