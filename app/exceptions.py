@@ -1,24 +1,22 @@
-class WorkspaceAccessDeniedError(Exception):
-    pass
+class WorkspaceAccessDeniedError(Exception): ...
 
 
-class InvalidCredentialsError(Exception):
-    pass
+class InvalidCredentialsError(Exception): ...
 
 
-class WorkspacePermissionDeniedError(Exception):
-    pass
+class WorkspacePermissionDeniedError(Exception): ...
 
 
-class UserAlreadyExistsError(Exception):
-    pass
+class UserAlreadyExistsError(Exception): ...
 
 
-class WorkspaceNotFoundError(Exception):
-    pass
+class WorkspaceNotFoundError(Exception): ...
 
 
 class DeliveryNotFoundError(Exception): ...
 
 
 class DeliveryNotReplayableError(Exception): ...
+
+
+class InvalidSubmissionPayloadError(Exception): ...
