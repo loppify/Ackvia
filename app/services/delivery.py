@@ -66,7 +66,7 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
     return delivery
 
 
-async def start_attempt(db: AsyncSession, delivery: Delivery):
+async def start_attempt(db: AsyncSession, delivery: Delivery) -> DeliveryAttempt:
     delivery_attempt = DeliveryAttempt(
         delivery=delivery, trigger=delivery.queued_trigger
     )

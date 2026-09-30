@@ -3,7 +3,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import NullPool
+from sqlalchemy import NullPool, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database.models import (
@@ -237,3 +237,34 @@ async def create_authenticated_workspace(
     )
 
     return user, workspace
+
+
+async def get_ingestion_counts(db):
+    submissions = await db.scalar(select(func.count()).select_from(Submission))
+    deliveries = await db.scalar(select(func.count()).select_from(Delivery))
+
+    return submissions, deliveries
+
+
+@pytest.fixture
+async def form_with_destination(
+    db: AsyncSession,
+    *,
+    workspace: Workspace | None = None,
+) -> Form:
+    form = await create_form(
+        db,
+        workspace=workspace,
+    )
+
+    destination = Destination(
+        form=form,
+        type="telegram",
+        reference="123456789",
+    )
+
+    db.add(form)
+    db.add(destination)
+    await db.commit()
+
+    return form

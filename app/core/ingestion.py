@@ -2,6 +2,7 @@ from typing import Any
 
 from app.exceptions import InvalidSubmissionPayloadError
 
+MAX_REQUEST_BODY_BYTES = 64 * 1024
 MAX_JSON_NODES = 100
 MAX_JSON_DEPTH = 5
 MAX_STRING_LENGTH = 10_000
