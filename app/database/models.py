@@ -147,6 +147,10 @@ class Delivery(Base):
         ForeignKey("destinations.id", ondelete="CASCADE"), nullable=False
     )
 
+    processing_token: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
     status: Mapped[DeliveryStatus] = mapped_column(
         nullable=False, default=DeliveryStatus.PENDING
     )

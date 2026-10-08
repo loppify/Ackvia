@@ -1,4 +1,5 @@
 import random
+import uuid
 from datetime import datetime, timedelta, timezone
 from operator import and_
 
@@ -20,7 +21,7 @@ from app.database.models import (
 )
 from app.database.queries.deliveries import (
     get_accessible_delivery_by_id,
-    get_delivery_for_processing,
+    get_claimed_delivery_for_processing,
 )
 from app.exceptions import DeliveryNotFoundError, DeliveryNotReplayableError
 from app.services.telegram import format_submission_message, send_telegram_alert
@@ -60,6 +61,7 @@ async def claim_next_delivery(db: AsyncSession) -> Delivery | None:
 
     delivery.status = DeliveryStatus.PROCESSING
     delivery.processing_started_at = datetime.now(timezone.utc)
+    delivery.processing_token = uuid.uuid4()
     await db.commit()
     log.info("Delivery claimed")
 
@@ -83,7 +85,7 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 
 
 async def finish_delivery_attempt(
-    db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
+        db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
     log = logger.bind(
         delivery_id=delivery.id,
@@ -91,6 +93,7 @@ async def finish_delivery_attempt(
         destination_id=delivery.destination_id,
         attempt_count=delivery.attempt_count,
     )
+
     now = datetime.now(timezone.utc)
     error = res.get("error", "Unknown error")
 
@@ -176,22 +179,16 @@ def calculate_retry_delay(attempt_count: int) -> float:
     )
 
 
-async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
-    log = logger.bind(delivery_id=delivery_id)
+async def process_delivery(delivery_id: int, processing_token: uuid.UUID, db: AsyncSession) -> None:
+    log = logger.bind(delivery_id=delivery_id, processing_token=processing_token)
     delivery = None
     attempt = None
 
     try:
-        delivery = await get_delivery_for_processing(db, delivery_id)
+        delivery = await get_claimed_delivery_for_processing(db, delivery_id, processing_token)
 
         if delivery is None:
             log.warning("Delivery not found")
-            return
-
-        if delivery.status != DeliveryStatus.PROCESSING:
-            log.bind(status=delivery.status).warning(
-                "Delivery is not in processing state"
-            )
             return
 
         attempt = await start_attempt(db, delivery)
@@ -224,7 +221,7 @@ async def process_delivery(delivery_id: int, db: AsyncSession) -> None:
         if delivery_db_id is None:
             raise
 
-        delivery = await get_delivery_for_processing(db, delivery_id)
+        delivery = await get_claimed_delivery_for_processing(db, delivery_id, processing_token)
 
         if delivery is None:
             raise
@@ -277,8 +274,8 @@ async def queue_manual_replay(db: AsyncSession, delivery_id, user_id) -> Deliver
     if delivery is None:
         raise DeliveryNotFoundError
     if delivery.status not in (
-        DeliveryStatus.FAILED,
-        DeliveryStatus.UNKNOWN,
+            DeliveryStatus.FAILED,
+            DeliveryStatus.UNKNOWN,
     ):
         raise DeliveryNotReplayableError
 

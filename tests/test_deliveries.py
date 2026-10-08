@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -19,7 +20,7 @@ from app.database.models import (
     Submission,
     WorkspaceRole,
 )
-from app.database.queries.deliveries import get_accessible_delivery_by_id
+from app.database.queries.deliveries import get_accessible_delivery_by_id, get_claimed_delivery_for_processing
 from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
     DeliveryNotFoundError,
@@ -86,7 +87,7 @@ async def test_delivery_creation(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_new_delivery_starts_pending_without_attempts(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     form = await create_form(
         db,
@@ -167,7 +168,7 @@ async def test_duplicate_delivery_failure(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_delivery_states_are_independent(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     form = await create_form(
         db,
@@ -249,8 +250,8 @@ async def test_delivery_states_are_independent(
     ],
 )
 async def test_delivery_status_is_persisted(
-    db: AsyncSession,
-    status: DeliveryStatus,
+        db: AsyncSession,
+        status: DeliveryStatus,
 ):
     delivery = await create_delivery(
         db,
@@ -265,7 +266,7 @@ async def test_delivery_status_is_persisted(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_can_be_selected_when_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -290,7 +291,7 @@ async def test_awaiting_retry_delivery_can_be_selected_when_due(
 
 @pytest.mark.asyncio
 async def test_awaiting_retry_delivery_is_not_selected_before_due(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -315,7 +316,7 @@ async def test_awaiting_retry_delivery_is_not_selected_before_due(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_schedules_retry(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -357,7 +358,7 @@ async def test_retryable_failure_schedules_retry(
 
 @pytest.mark.asyncio
 async def test_retry_delay_increases_with_attempt_count(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -393,7 +394,7 @@ async def test_retry_delay_increases_with_attempt_count(
 
 @pytest.mark.asyncio
 async def test_retryable_failure_exhausts_retries(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     delivery = await create_delivery(
         db,
@@ -436,10 +437,12 @@ async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatc
     monkeypatch.setattr(
         "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
     )
-    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
-
+    await create_delivery(db, DeliveryStatus.PENDING)
+    delivery = await claim_next_delivery(db)
     with pytest.raises(RuntimeError):
-        await process_delivery(delivery.id, db)
+        if delivery.processing_token is None:
+            raise RuntimeError
+        await process_delivery(delivery_id=delivery.id, processing_token=delivery.processing_token, db=db)
 
     delivery = await db.scalar(
         select(Delivery)
@@ -456,7 +459,7 @@ async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatc
 
 @pytest.mark.asyncio
 async def test_unexpected_exception_respects_max_attempts(
-    db: AsyncSession, monkeypatch
+        db: AsyncSession, monkeypatch
 ):
     async def fake_execute_delivery_attempt(destination, message):
         raise RuntimeError("Test Failure")
@@ -464,11 +467,12 @@ async def test_unexpected_exception_respects_max_attempts(
     monkeypatch.setattr(
         "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
     )
-    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
-    delivery.attempt_count = MAX_DELIVERY_ATTEMPTS - 1
+    await create_delivery(db, DeliveryStatus.PENDING)
+    delivery = await claim_next_delivery(db)
 
+    delivery.attempt_count = MAX_DELIVERY_ATTEMPTS - 1
     with pytest.raises(RuntimeError):
-        await process_delivery(delivery.id, db)
+        await process_delivery(delivery_id=delivery.id, processing_token=delivery.processing_token, db=db)
 
     delivery = await db.scalar(
         select(Delivery)
@@ -493,7 +497,7 @@ async def test_successful_processing_still_works(db: AsyncSession, monkeypatch):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
     delivery.attempt_count = MAX_DELIVERY_ATTEMPTS - 1
 
-    await process_delivery(delivery.id, db)
+    await process_delivery(delivery_id=delivery.id, processing_token=delivery.processing_token, db=db)
 
     delivery = await db.scalar(
         select(Delivery)
@@ -521,7 +525,7 @@ async def test_permanent_failre_still_works(db: AsyncSession, monkeypatch):
     )
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
 
-    await process_delivery(delivery.id, db)
+    await process_delivery(delivery_id=delivery.id, processing_token=delivery.processing_token, db=db)
 
     delivery = await db.scalar(
         select(Delivery)
@@ -717,7 +721,7 @@ async def test_get_delivery_returns_attempts(db: AsyncSession, client):
     assert response.status_code == 200
     assert data["attempt_count"] == 1
     assert (
-        data["attempts"][0]["result"] == DeliveryAttemptResult.RETRYABLE_FAILURE.value
+            data["attempts"][0]["result"] == DeliveryAttemptResult.RETRYABLE_FAILURE.value
     )
 
 
@@ -734,7 +738,7 @@ async def test_get_delivery_returns_404_when_not_found(client, db: AsyncSession)
 
 
 async def test_get_accessible_delivery_by_id_returns_delivery_for_member(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
     workspace = await create_workspace(db)
@@ -781,7 +785,7 @@ async def test_get_accessible_delivery_by_id_returns_delivery_for_member(
 
 
 async def test_get_accessible_delivery_by_id_returns_none_for_foreign_workspace(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -827,7 +831,7 @@ async def test_get_accessible_delivery_by_id_returns_none_for_foreign_workspace(
 
 
 async def test_get_accessible_delivery_by_id_returns_none_for_unknown_delivery(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -841,8 +845,8 @@ async def test_get_accessible_delivery_by_id_returns_none_for_unknown_delivery(
 
 
 async def test_get_delivery_returns_accessible_delivery(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     user = await register_and_get_user(client, db)
 
@@ -884,8 +888,8 @@ async def test_get_delivery_returns_accessible_delivery(
 
 @pytest.mark.asyncio
 async def test_get_delivery_hides_foreign_workspace_delivery(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     await create_authenticated_workspace(client, db)
 
@@ -902,8 +906,8 @@ async def test_get_delivery_hides_foreign_workspace_delivery(
 
 @pytest.mark.asyncio
 async def test_get_delivery_requires_authentication(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     workspace = await create_workspace(db)
     delivery = await create_delivery(
@@ -919,7 +923,7 @@ async def test_get_delivery_requires_authentication(
 
 
 async def test_manual_replay_allows_workspace_member(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
     workspace = await create_workspace(db)
@@ -972,7 +976,7 @@ async def test_manual_replay_allows_workspace_member(
 
 
 async def test_manual_replay_rejects_foreign_workspace_delivery(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -1019,7 +1023,7 @@ async def test_manual_replay_rejects_foreign_workspace_delivery(
 
 
 async def test_rejected_foreign_replay_preserves_delivery(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -1070,8 +1074,8 @@ async def test_rejected_foreign_replay_preserves_delivery(
 
 
 async def test_replay_foreign_delivery_returns_404(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     await register_and_get_user(client, db)
 
@@ -1116,8 +1120,8 @@ async def test_replay_foreign_delivery_returns_404(
 
 
 async def test_replay_requires_authentication(
-    db: AsyncSession,
-    client: AsyncClient,
+        db: AsyncSession,
+        client: AsyncClient,
 ):
     workspace = await create_workspace(db)
 
@@ -1153,3 +1157,161 @@ async def test_replay_requires_authentication(
     response = await client.post(f"/api/deliveries/{delivery.id}/replay")
 
     assert response.status_code == 401
+
+
+async def test_claim_next_delivery_assigns_processing_token(
+        db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+    assert claimed.id == delivery.id
+    assert claimed.status == DeliveryStatus.PROCESSING
+    assert claimed.processing_token is not None
+
+
+async def test_claim_persists_processing_token(
+        db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+
+    await db.refresh(delivery)
+
+    assert delivery.processing_token == claimed.processing_token
+
+
+async def test_different_claims_receive_different_processing_tokens(
+        db: AsyncSession,
+):
+    first = await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    second = await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    first_claim = await claim_next_delivery(db)
+    second_claim = await claim_next_delivery(db)
+
+    assert first_claim is not None
+    assert second_claim is not None
+
+    assert first_claim.processing_token is not None
+    assert second_claim.processing_token is not None
+
+    assert first_claim.processing_token != second_claim.processing_token
+
+
+async def test_processing_query_returns_delivery_for_current_claim(
+        db: AsyncSession,
+):
+    await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+    assert claimed.processing_token is not None
+
+    result = await get_claimed_delivery_for_processing(
+        db,
+        claimed.id,
+        claimed.processing_token,
+    )
+
+    assert result is not None
+    assert result.id == claimed.id
+
+
+async def test_processing_query_rejects_wrong_token(
+        db: AsyncSession,
+):
+    await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+
+    result = await get_claimed_delivery_for_processing(
+        db,
+        claimed.id,
+        uuid.uuid4(),
+    )
+
+    assert result is None
+
+
+async def test_processing_query_rejects_delivery_not_in_processing_state(
+        db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    result = await get_claimed_delivery_for_processing(
+        db,
+        delivery.id,
+        uuid.uuid4(),
+    )
+
+    assert result is None
+
+
+async def test_stale_processing_token_does_not_start_attempt(
+        db: AsyncSession,
+        monkeypatch,
+):
+    await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+
+    original_attempt_count = claimed.attempt_count
+
+    called = False
+
+    async def fake_execute(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {"success": True}
+
+    monkeypatch.setattr(
+        "app.services.delivery.execute_delivery_attempt",
+        fake_execute,
+    )
+
+    await process_delivery(
+        delivery_id=claimed.id,
+        processing_token=uuid.uuid4(),
+        db=db,
+    )
+
+    await db.refresh(claimed)
+
+    assert claimed.attempt_count == original_attempt_count
+    assert called is False
