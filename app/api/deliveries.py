@@ -50,6 +50,6 @@ async def replay_delivery(
         )
     except DeliveryNotReplayableError:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Delivery is not replayable"
+            status_code=status.HTTP_409_CONFLICT, detail="Delivery is not replayable"
         )
     return delivery

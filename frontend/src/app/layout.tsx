@@ -5,8 +5,8 @@ import "./globals.css";
 import "./dashboard.css";
 
 export const metadata: Metadata = {
-  title: "Overview · Ackvia",
-  description: "Portfolio lead reliability at a glance.",
+  title: "Evidence · Ackvia",
+  description: "Captured leads, delivery outcomes, and attempt history.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -78,7 +78,7 @@ createServer(async (request, response) => {
     options.newSubmission = true;
     return send({ ok: true });
   }
-  requests.push({ path: url.pathname, query: Object.fromEntries(url.searchParams), method: request.method });
+  requests.push({ path: url.pathname, query: Object.fromEntries(url.searchParams), method: request.method, cookie: request.headers.cookie ?? null });
   if (options.readDelay) await wait(options.readDelay);
   if (url.pathname === "/api/forms") {
     if (options.scenario === "forms-error") return send({ detail: "Fixture API unavailable" }, 503);

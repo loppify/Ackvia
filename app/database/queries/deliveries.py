@@ -14,7 +14,7 @@ from app.database.models import (
 
 
 async def get_accessible_delivery_by_id(
-    db: AsyncSession, delivery_id: int, user_id: uuid.UUID
+        db: AsyncSession, delivery_id: int, user_id: uuid.UUID
 ):
     return await db.scalar(
         select(Delivery)
@@ -29,7 +29,7 @@ async def get_accessible_delivery_by_id(
 
 
 async def get_claimed_delivery_for_processing(
-    db: AsyncSession, delivery_id: int, processing_token: uuid.UUID
+        db: AsyncSession, delivery_id: int, processing_token: uuid.UUID
 ) -> Delivery | None:
     result = await db.execute(
         select(Delivery)
@@ -41,6 +41,7 @@ async def get_claimed_delivery_for_processing(
         .options(
             selectinload(Delivery.destination),
             selectinload(Delivery.submission).selectinload(Submission.form),
+            selectinload(Delivery.attempts)
         )
         .with_for_update()
     )

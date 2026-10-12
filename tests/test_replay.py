@@ -284,3 +284,20 @@ async def test_manual_replay_membership_in_other_workspace_does_not_grant_access
             delivery.id,
             user.id,
         )
+
+async def test_replay_existing_non_replayable_delivery_returns_409(
+    client,
+    db: AsyncSession,
+):
+    _, workspace = await create_authenticated_workspace(client, db)
+    delivery = await create_delivery(
+        db,
+        DeliveryStatus.SUCCEEDED,
+        workspace=workspace,
+    )
+
+    response = await client.post(f"/api/deliveries/{delivery.id}/replay")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Delivery is not replayable"
+
