@@ -21,6 +21,8 @@ export function Desk({ snapshot }: { snapshot: DeskSnapshot }) {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [inspectionFocus, setInspectionFocus] = useState<"execution" | "payload">("execution");
   const inFlight = useRef(false);
+  const previousSubmission = useRef(snapshot.context.submission);
+  const previousDelivery = useRef(snapshot.context.delivery);
   const { context, submission: submissionResource, delivery: deliveryResource } = snapshot;
   const submission = submissionResource.data;
   const pageForm = snapshot.forms.data?.find((item) => item.id === context.form);
@@ -40,13 +42,17 @@ export function Desk({ snapshot }: { snapshot: DeskSnapshot }) {
   const refreshAll = useCallback(() => { setRefreshVersion((value) => value + 1); refresh(); }, [refresh]);
   useEffect(() => { inFlight.current = pending; }, [pending]);
   useEffect(() => {
+    if (previousSubmission.current === context.submission) return;
+    previousSubmission.current = context.submission;
     const investigation = document.getElementById("investigation");
     if (investigation) investigation.scrollTop = 0;
   }, [context.submission]);
   useEffect(() => {
+    if (previousDelivery.current === context.delivery) return;
+    previousDelivery.current = context.delivery;
     const execution = document.getElementById("execution-panel");
     if (execution) execution.scrollTop = 0;
-  }, [context.submission, context.delivery]);
+  }, [context.delivery]);
   useEffect(() => {
     // Materialize defaults without another request. Polling must not silently
     // jump to a newer submission (or a different delivery) during investigation.
