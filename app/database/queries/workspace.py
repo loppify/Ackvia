@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,10 +15,8 @@ async def get_workspace_membership_by_user_and_workspace_id(
     workspace_membership = await db.scalar(
         select(WorkspaceMembership)
         .options(selectinload(WorkspaceMembership.workspace))
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id
-            and WorkspaceMembership.user_id == user_id
-        )
+        .where(WorkspaceMembership.workspace_id == workspace_id)
+        .where(WorkspaceMembership.user_id == user_id)
     )
 
     return workspace_membership
@@ -66,3 +65,22 @@ async def require_workspace_role(
     if workspace_membership.role not in allowed_roles:
         raise WorkspacePermissionDeniedError
     return workspace_membership
+
+
+async def create_user_workspace(
+    db: AsyncSession, user_id: uuid.UUID, workspace_name: str
+) -> Workspace:
+    workspace = Workspace(name=workspace_name)
+    db.add(workspace)
+    await db.flush()
+    await db.refresh(workspace)
+    workspace_membership = WorkspaceMembership(
+        role=WorkspaceRole.OWNER, user_id=user_id, workspace=workspace
+    )
+    db.add(workspace_membership)
+    try:
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        raise
+    return workspace

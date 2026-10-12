@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User, Workspace
 from app.database.queries.workspace import (
+    create_user_workspace,
     get_user_workspaces,
     get_workspace_membership_by_user_and_workspace_id,
 )
@@ -24,3 +25,7 @@ async def get_user_workspace(
 
 async def list_user_workspaces(db: AsyncSession, user: User) -> list[Workspace]:
     return await get_user_workspaces(db, user.id)
+
+
+async def create_workspace(db: AsyncSession, user: User, name: str) -> Workspace:
+    return await create_user_workspace(db=db, user_id=user.id, workspace_name=name)

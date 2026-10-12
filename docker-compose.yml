@@ -10,7 +10,16 @@ services:
     depends_on:
       db:
         condition: service_healthy
-
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uv run python -m app.workers.run_workers
+    env_file:
+      - .env.docker
+    depends_on:
+      db:
+        condition: service_healthy
   db:
     image: postgres:16-alpine
     environment:

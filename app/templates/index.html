@@ -80,10 +80,81 @@
         </section>
 
 
-        <section class="card create-card">
+        <section id="auth-card" class="card auth-card">
 
             <div class="step-header">
                 <div class="step-number">01</div>
+
+                <div>
+                    <h2>Sign in to Ackvia</h2>
+                    <p>Create an account or continue with an existing one.</p>
+                </div>
+            </div>
+
+            <div class="form-fields">
+                <div class="field">
+                    <label for="auth-email">Email</label>
+                    <input
+                            type="email"
+                            id="auth-email"
+                            autocomplete="email"
+                            placeholder="you@example.com"
+                            required
+                    >
+                </div>
+
+                <div class="field">
+                    <label for="auth-password">Password</label>
+                    <input
+                            type="password"
+                            id="auth-password"
+                            autocomplete="current-password"
+                            minlength="8"
+                            required
+                    >
+                </div>
+
+                <div class="field">
+                    <label for="workspace-name">Workspace name</label>
+                    <input
+                            type="text"
+                            id="workspace-name"
+                            autocomplete="organization"
+                            maxlength="120"
+                            placeholder="Acme Agency"
+                    >
+                </div>
+            </div>
+
+            <p id="auth-message" class="form-message" role="status"></p>
+
+            <div class="auth-actions">
+                <button
+                        id="register-btn"
+                        class="primary-button"
+                        type="button"
+                        onclick="authenticate('register')"
+                >
+                    Register
+                </button>
+
+                <button
+                        id="login-btn"
+                        class="secondary-button"
+                        type="button"
+                        onclick="authenticate('login')"
+                >
+                    Login
+                </button>
+            </div>
+
+        </section>
+
+
+        <section id="create-card" class="card create-card hidden">
+
+            <div class="step-header">
+                <div class="step-number">02</div>
 
                 <div>
                     <h2>{{ t("create_endpoint_title") }}</h2>
@@ -151,7 +222,7 @@
         <section id="result-section" class="card result-card hidden">
 
             <div class="step-header">
-                <div class="step-number">02</div>
+                <div class="step-number">03</div>
 
                 <div>
                     <h2>{{ t("result_title") }}</h2>
@@ -255,11 +326,143 @@
 
 <script>
     let currentEndpoint = "";
+    let currentWorkspaceId = "";
+
+    async function readApiError(response) {
+        try {
+            const data = await response.json();
+
+            if (typeof data.detail === "string") {
+                return data.detail;
+            }
+
+            if (Array.isArray(data.detail)) {
+                return data.detail.map(item => item.msg).join(", ");
+            }
+        } catch (_) {
+            return `Request failed (${response.status})`;
+        }
+
+        return `Request failed (${response.status})`;
+    }
+
+    function setAuthMessage(message, isError = false) {
+        const element = document.getElementById("auth-message");
+        element.textContent = message;
+        element.classList.toggle("error", isError);
+    }
+
+    function setAuthLoading(isLoading) {
+        document.getElementById("register-btn").disabled = isLoading;
+        document.getElementById("login-btn").disabled = isLoading;
+    }
+
+    async function ensureWorkspace() {
+        const workspacesResponse = await fetch("/api/workspaces", {
+            headers: {"Accept": "application/json"}
+        });
+
+        if (!workspacesResponse.ok) {
+            throw new Error(await readApiError(workspacesResponse));
+        }
+
+        const workspaces = await workspacesResponse.json();
+
+        if (workspaces.length > 0) {
+            return workspaces[0];
+        }
+
+        const workspaceName = document
+            .getElementById("workspace-name")
+            .value
+            .trim();
+
+        if (!workspaceName) {
+            throw new Error("Enter a workspace name to finish setup.");
+        }
+
+        const createResponse = await fetch("/api/workspaces", {
+            method: "POST",
+            headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({name: workspaceName})
+        });
+
+        if (!createResponse.ok) {
+            throw new Error(await readApiError(createResponse));
+        }
+
+        return await createResponse.json();
+    }
+
+    function completeOnboarding(workspace) {
+        currentWorkspaceId = workspace.id;
+        document.getElementById("auth-card").classList.add("hidden");
+        document.getElementById("create-card").classList.remove("hidden");
+    }
+
+    async function authenticate(action) {
+        const email = document.getElementById("auth-email").value.trim();
+        const password = document.getElementById("auth-password").value;
+
+        if (!email || !password) {
+            setAuthMessage("Enter your email and password.", true);
+            return;
+        }
+
+        setAuthLoading(true);
+        setAuthMessage(action === "register" ? "Creating account…" : "Signing in…");
+
+        try {
+            const response = await fetch(`/api/auth/${action}`, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({email, password})
+            });
+
+            if (!response.ok) {
+                throw new Error(await readApiError(response));
+            }
+
+            setAuthMessage("Preparing workspace…");
+            completeOnboarding(await ensureWorkspace());
+        } catch (error) {
+            setAuthMessage(error.message, true);
+        } finally {
+            setAuthLoading(false);
+        }
+    }
+
+    async function restoreSession() {
+        const response = await fetch("/api/auth/me", {
+            headers: {"Accept": "application/json"}
+        });
+
+        if (!response.ok) {
+            return;
+        }
+
+        try {
+            completeOnboarding(await ensureWorkspace());
+        } catch (error) {
+            setAuthMessage(error.message, true);
+        }
+    }
 
     async function createEndpoint() {
         const title = document.getElementById("title").value.trim();
         const chatId = document.getElementById("chat_id").value.trim();
         const button = document.getElementById("create-btn");
+
+        if (!currentWorkspaceId) {
+            alert("Sign in and choose a workspace first.");
+            return;
+        }
 
         if (!title || !chatId) {
             alert("{{ t('fill_all_fields') }}");
@@ -278,13 +481,13 @@
                     title,
                     destinations: [{type: "telegram",
                         reference: chatId}],
-                    language: "{{ language }}"
+                    language: "{{ language }}",
+                    workspace_id: currentWorkspaceId
                 })
             });
 
             if (!res.ok) {
-                console.log(await res.json());
-                throw new Error("Failed to create endpoint");
+                throw new Error(await readApiError(res));
             }
 
             const data = await res.json();
@@ -330,6 +533,8 @@
 
         alert("{{ t('code_copied') }}");
     }
+
+    restoreSession();
 </script>
 
 </body>

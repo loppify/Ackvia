@@ -372,6 +372,28 @@ body {
     margin-bottom: 22px;
 }
 
+.hidden {
+    display: none;
+}
+
+.auth-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.form-message {
+    min-height: 20px;
+    margin: -8px 0 14px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.form-message.error {
+    color: #fda4af;
+}
+
 .field label,
 .test-fields label {
     display: block;

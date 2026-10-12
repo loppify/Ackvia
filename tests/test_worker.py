@@ -172,6 +172,7 @@ async def test_recovered_delivery_gets_new_processing_token(
     assert reclaimed.processing_token is not None
     assert reclaimed.processing_token != old_token
 
+
 async def test_worker_exception_cannot_mutate_after_claim_changes_in_another_session(
     db: AsyncSession,
     monkeypatch,
@@ -227,6 +228,7 @@ async def test_worker_exception_cannot_mutate_after_claim_changes_in_another_ses
         assert delivery.attempts[0].result is None
         assert delivery.attempts[0].finished_at is None
 
+
 async def test_old_worker_cannot_finish_after_recovery_and_reclaim(
     db: AsyncSession,
     monkeypatch,
@@ -248,9 +250,9 @@ async def test_old_worker_cannot_finish_after_recovery_and_reclaim(
             stale_delivery = await other_db.get(Delivery, delivery_id)
 
             assert stale_delivery is not None
-            stale_delivery.processing_started_at = (
-                datetime.now(timezone.utc) - timedelta(minutes=10)
-            )
+            stale_delivery.processing_started_at = datetime.now(
+                timezone.utc
+            ) - timedelta(minutes=10)
             await other_db.commit()
 
             assert await recovery_stale_deliveries(other_db) == 1
@@ -297,6 +299,7 @@ async def test_old_worker_cannot_finish_after_recovery_and_reclaim(
         assert len(delivery.attempts) == 1
         assert delivery.attempts[0].result == DeliveryAttemptResult.UNKNOWN
         assert delivery.attempts[0].finished_at is not None
+
 
 async def test_successful_worker_result_is_durably_persisted(
     db: AsyncSession,
