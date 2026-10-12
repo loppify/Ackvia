@@ -208,7 +208,9 @@ async def test_manual_replay_is_recorded_in_attempt_history(
         fake_execute_delivery_attempt,
     )
 
-    await process_delivery(delivery.id, db)
+    if delivery.processing_token is None:
+        return
+    await process_delivery(delivery.id, delivery.processing_token, db)
 
     attempt = await db.scalar(
         select(DeliveryAttempt).where(DeliveryAttempt.delivery_id == delivery.id)

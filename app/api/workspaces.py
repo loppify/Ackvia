@@ -4,8 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_user
 from app.database.models import User
 from app.database.session import get_db
-from app.schemas.workspaces import WorkspaceRead
-from app.services.workspace import list_user_workspaces
+from app.schemas.workspaces import WorkspaceCreate, WorkspaceRead
+from app.services.workspace import create_workspace, list_user_workspaces
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
@@ -15,3 +15,12 @@ async def get_user_workspaces_handler(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
 ):
     return await list_user_workspaces(db, user)
+
+
+@router.post("", response_model=WorkspaceRead, status_code=status.HTTP_201_CREATED)
+async def create_user_workspace_handler(
+    request: WorkspaceCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await create_workspace(db=db, name=request.name, user=user)

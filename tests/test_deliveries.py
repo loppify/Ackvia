@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -19,7 +20,10 @@ from app.database.models import (
     Submission,
     WorkspaceRole,
 )
-from app.database.queries.deliveries import get_accessible_delivery_by_id
+from app.database.queries.deliveries import (
+    get_accessible_delivery_by_id,
+    get_claimed_delivery_for_processing,
+)
 from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
     DeliveryNotFoundError,
@@ -436,10 +440,14 @@ async def test_unexpected_exception_schedules_retry(db: AsyncSession, monkeypatc
     monkeypatch.setattr(
         "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
     )
-    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
-
+    await create_delivery(db, DeliveryStatus.PENDING)
+    delivery = await claim_next_delivery(db)
     with pytest.raises(RuntimeError):
-        await process_delivery(delivery.id, db)
+        if delivery.processing_token is None:
+            raise RuntimeError
+        await process_delivery(
+            delivery_id=delivery.id, processing_token=delivery.processing_token, db=db
+        )
 
     delivery = await db.scalar(
         select(Delivery)
@@ -464,11 +472,14 @@ async def test_unexpected_exception_respects_max_attempts(
     monkeypatch.setattr(
         "app.services.delivery.execute_delivery_attempt", fake_execute_delivery_attempt
     )
-    delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
-    delivery.attempt_count = MAX_DELIVERY_ATTEMPTS - 1
+    await create_delivery(db, DeliveryStatus.PENDING)
+    delivery = await claim_next_delivery(db)
 
+    delivery.attempt_count = MAX_DELIVERY_ATTEMPTS - 1
     with pytest.raises(RuntimeError):
-        await process_delivery(delivery.id, db)
+        await process_delivery(
+            delivery_id=delivery.id, processing_token=delivery.processing_token, db=db
+        )
 
     delivery = await db.scalar(
         select(Delivery)
@@ -493,7 +504,9 @@ async def test_successful_processing_still_works(db: AsyncSession, monkeypatch):
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
     delivery.attempt_count = MAX_DELIVERY_ATTEMPTS - 1
 
-    await process_delivery(delivery.id, db)
+    await process_delivery(
+        delivery_id=delivery.id, processing_token=delivery.processing_token, db=db
+    )
 
     delivery = await db.scalar(
         select(Delivery)
@@ -521,7 +534,9 @@ async def test_permanent_failre_still_works(db: AsyncSession, monkeypatch):
     )
     delivery = await create_delivery(db, DeliveryStatus.PROCESSING)
 
-    await process_delivery(delivery.id, db)
+    await process_delivery(
+        delivery_id=delivery.id, processing_token=delivery.processing_token, db=db
+    )
 
     delivery = await db.scalar(
         select(Delivery)
@@ -1153,3 +1168,161 @@ async def test_replay_requires_authentication(
     response = await client.post(f"/api/deliveries/{delivery.id}/replay")
 
     assert response.status_code == 401
+
+
+async def test_claim_next_delivery_assigns_processing_token(
+    db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+    assert claimed.id == delivery.id
+    assert claimed.status == DeliveryStatus.PROCESSING
+    assert claimed.processing_token is not None
+
+
+async def test_claim_persists_processing_token(
+    db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+
+    await db.refresh(delivery)
+
+    assert delivery.processing_token == claimed.processing_token
+
+
+async def test_different_claims_receive_different_processing_tokens(
+    db: AsyncSession,
+):
+    await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    first_claim = await claim_next_delivery(db)
+    second_claim = await claim_next_delivery(db)
+
+    assert first_claim is not None
+    assert second_claim is not None
+
+    assert first_claim.processing_token is not None
+    assert second_claim.processing_token is not None
+
+    assert first_claim.processing_token != second_claim.processing_token
+
+
+async def test_processing_query_returns_delivery_for_current_claim(
+    db: AsyncSession,
+):
+    await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+    assert claimed.processing_token is not None
+
+    result = await get_claimed_delivery_for_processing(
+        db,
+        claimed.id,
+        claimed.processing_token,
+    )
+
+    assert result is not None
+    assert result.id == claimed.id
+
+
+async def test_processing_query_rejects_wrong_token(
+    db: AsyncSession,
+):
+    await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+
+    result = await get_claimed_delivery_for_processing(
+        db,
+        claimed.id,
+        uuid.uuid4(),
+    )
+
+    assert result is None
+
+
+async def test_processing_query_rejects_delivery_not_in_processing_state(
+    db: AsyncSession,
+):
+    delivery = await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    result = await get_claimed_delivery_for_processing(
+        db,
+        delivery.id,
+        uuid.uuid4(),
+    )
+
+    assert result is None
+
+
+async def test_stale_processing_token_does_not_start_attempt(
+    db: AsyncSession,
+    monkeypatch,
+):
+    await create_delivery(
+        db,
+        status=DeliveryStatus.PENDING,
+    )
+
+    claimed = await claim_next_delivery(db)
+
+    assert claimed is not None
+
+    original_attempt_count = claimed.attempt_count
+
+    called = False
+
+    async def fake_execute(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {"success": True}
+
+    monkeypatch.setattr(
+        "app.services.delivery.execute_delivery_attempt",
+        fake_execute,
+    )
+
+    await process_delivery(
+        delivery_id=claimed.id,
+        processing_token=uuid.uuid4(),
+        db=db,
+    )
+
+    await db.refresh(claimed)
+
+    assert claimed.attempt_count == original_attempt_count
+    assert called is False

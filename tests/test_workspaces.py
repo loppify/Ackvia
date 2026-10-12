@@ -401,3 +401,95 @@ async def test_require_workspace_role_hides_inaccessible_workspace(
             workspace.id,
             {WorkspaceRole.OWNER},
         )
+
+
+async def test_authenticated_user_can_create_workspace(client, db: AsyncSession):
+    register_response = await client.post(
+        "/api/auth/register",
+        json={
+            "email": "owner@example.com",
+            "password": "strong-password",
+        },
+    )
+    assert register_response.status_code == 201
+
+    response = await client.post(
+        "/api/workspaces",
+        json={"name": "Acme Agency"},
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["name"] == "Acme Agency"
+
+    user = await get_user_by_email(db, "owner@example.com")
+    assert user is not None
+
+    membership = await get_workspace_membership(
+        db,
+        user.id,
+        data["id"],
+    )
+
+    assert membership is not None
+    assert membership.role == WorkspaceRole.OWNER
+
+
+async def test_create_workspace_requires_authentication(client):
+    client.cookies.clear()
+
+    response = await client.post(
+        "/api/workspaces",
+        json={"name": "Acme Agency"},
+    )
+
+    assert response.status_code == 401
+
+
+async def test_created_workspace_is_returned_by_workspace_list(
+    client,
+):
+    register_response = await client.post(
+        "/api/auth/register",
+        json={
+            "email": "owner@example.com",
+            "password": "strong-password",
+        },
+    )
+    assert register_response.status_code == 201
+
+    create_response = await client.post(
+        "/api/workspaces",
+        json={"name": "Acme Agency"},
+    )
+    assert create_response.status_code == 201
+
+    response = await client.get("/api/workspaces")
+
+    assert response.status_code == 200
+    assert response.json() == [create_response.json()]
+
+
+async def test_get_user_workspace_rejects_user_when_other_user_owns_same_workspace(
+    db: AsyncSession,
+):
+    owner = User(email="owner@example.com")
+    outsider = User(email="outsider@example.com")
+    workspace = Workspace(name="Private Workspace")
+
+    db.add(
+        WorkspaceMembership(
+            user=owner,
+            workspace=workspace,
+            role=WorkspaceRole.OWNER,
+        )
+    )
+    db.add(outsider)
+    await db.commit()
+
+    with pytest.raises(WorkspaceAccessDeniedError):
+        await get_user_workspace(
+            db,
+            outsider,
+            workspace.id,
+        )

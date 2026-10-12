@@ -1111,3 +1111,45 @@ async def test_member_can_create_form(
     )
 
     assert response.status_code == 201
+
+
+async def test_new_user_can_create_workspace_and_telegram_form(client):
+    register_response = await client.post(
+        "/api/auth/register",
+        json={
+            "email": "owner@example.com",
+            "password": "strong-password",
+        },
+    )
+    assert register_response.status_code == 201
+
+    workspace_response = await client.post(
+        "/api/workspaces",
+        json={"name": "Acme Agency"},
+    )
+    assert workspace_response.status_code == 201
+    workspace_id = workspace_response.json()["id"]
+
+    form_response = await client.post(
+        "/api/forms",
+        json={
+            "title": "Contact form",
+            "language": "en",
+            "workspace_id": workspace_id,
+            "destinations": [
+                {
+                    "type": "telegram",
+                    "reference": "123456789",
+                }
+            ],
+        },
+    )
+
+    assert form_response.status_code == 201
+    form = form_response.json()
+    assert form["title"] == "Contact form"
+
+    list_response = await client.get("/api/forms")
+
+    assert list_response.status_code == 200
+    assert list_response.json() == [form]

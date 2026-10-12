@@ -5,7 +5,13 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Delivery, DeliveryStatus, DeliveryTrigger, FailureType
+from app.database.models import (
+    Delivery,
+    DeliveryAttemptResult,
+    DeliveryStatus,
+    DeliveryTrigger,
+    FailureType,
+)
 from app.database.session import async_session_maker
 from app.services.delivery import (
     MAX_DELIVERY_ATTEMPTS,
@@ -42,8 +48,14 @@ async def run_delivery_worker() -> None:
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
             async with async_session_maker() as db:
-                await process_delivery(delivery_id=delivery.id, db=db)
-
+                if delivery.processing_token is not None:
+                    await process_delivery(
+                        delivery_id=delivery.id,
+                        processing_token=delivery.processing_token,
+                        db=db,
+                    )
+                else:
+                    raise
         except Exception:
             logger.exception("Delivery worker iteration failed")
             await asyncio.sleep(POLL_INTERVAL)
@@ -54,10 +66,12 @@ async def recovery_stale_deliveries(db: AsyncSession) -> int:
     cutoff = now - timedelta(seconds=PROCESSING_TIMEOUT_SECONDS)
 
     result = await db.scalars(
-        select(Delivery).where(
+        select(Delivery)
+        .where(
             Delivery.status == DeliveryStatus.PROCESSING,
             Delivery.processing_started_at <= cutoff,
         )
+        .with_for_update()
     )
     stale_deliveries = result.all()
     for delivery in stale_deliveries:
@@ -67,18 +81,22 @@ async def recovery_stale_deliveries(db: AsyncSession) -> int:
             processing_started_at=delivery.processing_started_at,
         )
         log.warning("Recovering stale delivery")
+        for attempt in delivery.attempts:
+            if attempt.finished_at is None:
+                attempt.result = DeliveryAttemptResult.UNKNOWN
+                attempt.finished_at = now
+        delivery.processing_token = None
+        delivery.processing_started_at = None
 
         if delivery.attempt_count < MAX_DELIVERY_ATTEMPTS:
             delivery.status = DeliveryStatus.AWAITING_RETRY
             delivery.queued_trigger = DeliveryTrigger.RETRY
-            delivery.processing_started_at = None
             delivery.next_retry_at = now
             log.warning("Stale delivery scheduled for retry")
 
         elif delivery.attempt_count >= MAX_DELIVERY_ATTEMPTS:
             delivery.status = DeliveryStatus.FAILED
             delivery.failure_type = FailureType.RETRIES_EXHAUSTED
-            delivery.processing_started_at = None
             delivery.next_retry_at = None
             log.error("Stale delivery retries exhausted")
 
