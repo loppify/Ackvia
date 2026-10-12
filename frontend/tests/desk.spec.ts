@@ -25,6 +25,8 @@ async function open(page: Page, suffix = "") {
 test("opens a source-scoped investigation and enriches a bounded page", async ({ page, request }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Submission #23", exact: true })).toBeVisible();
+  await expect(page.locator(".desk")).toHaveCSS("display", "flex");
+  await expect(page.locator(".desk")).toHaveCSS("overflow", "hidden");
   await expect(page.getByRole("button", { name: "Fixture · contact", exact: true })).toBeVisible();
   await expect(page.getByText("Delivery evidence loaded", { exact: true })).toBeVisible();
   await expect(page.locator(".stream-row")).toHaveCount(20);
