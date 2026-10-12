@@ -33,8 +33,18 @@ class DeliveryBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DestinationRead(BaseModel):
+    id: int
+    type: str
+    reference: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DeliveryDetailRead(DeliveryBase):
     submission_id: int
     failure_type: FailureType | None
     created_at: datetime
     attempts: list[DeliveryAttemptRead]
+    external_reference: str | None
+    destination: DestinationRead

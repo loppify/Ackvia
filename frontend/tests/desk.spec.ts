@@ -5,8 +5,16 @@ const context = `/?form=${form}`;
 const control = "http://127.0.0.1:8101/__control";
 const stateUrl = "http://127.0.0.1:8101/__state";
 
-test.beforeEach(async ({ request }) => {
+test.beforeEach(async ({ request, context }) => {
   await request.post(control, { data: {} });
+  await context.addCookies([{
+    name: "ackvia_session",
+    value: "fixture-session",
+    domain: "127.0.0.1",
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+  }]);
 });
 
 async function open(page: Page, suffix = "") {
@@ -24,6 +32,7 @@ test("opens a source-scoped investigation and enriches a bounded page", async ({
   await expect(page.locator(".destination")).toHaveCount(2);
   const state = await (await request.get(stateUrl)).json();
   expect(state.maxReads).toBeLessThanOrEqual(4);
+  expect(state.requests.every((entry: { cookie: string | null }) => entry.cookie === "ackvia_session=fixture-session")).toBe(true);
   expect(state.requests.filter((entry: { path: string }) => entry.path.endsWith("/submissions"))[0].query).toEqual({ limit: "21", offset: "0" });
   expect(new Set(state.requests.filter((entry: { path: string }) => /^\/api\/submissions\//.test(entry.path)).map((entry: { path: string }) => entry.path)).size).toBe(20);
 });
@@ -64,6 +73,24 @@ test("existing deep links map to the workspace, preserving pagination", async ({
     await expect(page.locator("main.desk-workspace")).toBeVisible();
   }
   await expect(page.locator(".outcome-failed")).toBeVisible();
+});
+
+test("unsupported mock portfolio routes redirect to real evidence", async ({ page }) => {
+  for (const path of [
+    "/overview",
+    "/clients",
+    "/sites",
+    "/incidents",
+    "/monitoring",
+    "/reports",
+    "/settings",
+    "/leads",
+    "/deliveries",
+  ]) {
+    await page.goto(path);
+    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:3100\/(?:\?.*)?$/);
+    await expect(page.locator("main.desk-workspace")).toBeVisible();
+  }
 });
 
 test("paginates submissions with lookahead and browses every form page", async ({ page }) => {

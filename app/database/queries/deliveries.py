@@ -41,6 +41,7 @@ async def get_claimed_delivery_for_processing(
         .options(
             selectinload(Delivery.destination),
             selectinload(Delivery.submission).selectinload(Submission.form),
+            selectinload(Delivery.attempts),
         )
         .with_for_update()
     )

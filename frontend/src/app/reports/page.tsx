@@ -1,2 +1,2 @@
-import { ReportsPage } from "@/features/dashboard/pages";
-export default function Page() { return <ReportsPage />; }
+import { redirect } from "next/navigation";
+export default function Page() { redirect("/"); }

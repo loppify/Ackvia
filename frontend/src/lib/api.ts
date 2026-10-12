@@ -1,3 +1,6 @@
+import "server-only";
+
+import { cookies } from "next/headers";
 import type {
   ApiError,
   DeliveryDetail,
@@ -99,12 +102,14 @@ async function readErrorDetail(response: Response): Promise<ApiError["detail"] |
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const session = (await cookies()).get("ackvia_session")?.value;
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     signal: init?.signal ?? AbortSignal.timeout(15000),
     cache: "no-store",
     headers: {
       Accept: "application/json",
+      ...(session ? { Cookie: `ackvia_session=${session}` } : {}),
       ...init?.headers,
     },
   });

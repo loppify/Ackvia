@@ -1,6 +1,5 @@
-import "../overview.css";
-import { Overview } from "@/features/overview/overview";
+import { redirect } from "next/navigation";
 
 export default function OverviewPage() {
-  return <Overview />;
+  redirect("/");
 }
