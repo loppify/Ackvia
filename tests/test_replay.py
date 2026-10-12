@@ -29,7 +29,7 @@ from tests.conftest import (
 
 @pytest.mark.asyncio
 async def test_failed_delivery_can_be_queued_for_manual_replay(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
     workspace = await create_workspace(db)
@@ -71,7 +71,7 @@ async def test_failed_delivery_can_be_queued_for_manual_replay(
 
 @pytest.mark.asyncio
 async def test_unknown_delivery_can_be_queued_for_manual_replay(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
     workspace = await create_workspace(db)
@@ -104,7 +104,7 @@ async def test_unknown_delivery_can_be_queued_for_manual_replay(
 
 @pytest.mark.asyncio
 async def test_manual_replay_raises_not_found_for_missing_delivery(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -127,8 +127,8 @@ async def test_manual_replay_raises_not_found_for_missing_delivery(
     ],
 )
 async def test_manual_replay_rejects_non_replayable_status(
-    db: AsyncSession,
-    status: DeliveryStatus,
+        db: AsyncSession,
+        status: DeliveryStatus,
 ):
     user = await create_user(db)
     workspace = await create_workspace(db)
@@ -181,9 +181,9 @@ async def test_replay_missing_delivery_returns_404(client, db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_manual_replay_is_recorded_in_attempt_history(
-    client,
-    db: AsyncSession,
-    monkeypatch,
+        client,
+        db: AsyncSession,
+        monkeypatch,
 ):
     user, workspace = await create_authenticated_workspace(client, db)
 
@@ -208,7 +208,9 @@ async def test_manual_replay_is_recorded_in_attempt_history(
         fake_execute_delivery_attempt,
     )
 
-    await process_delivery(delivery.id, db)
+    if delivery.processing_token is None:
+        return
+    await process_delivery(delivery.id, delivery.processing_token, db)
 
     attempt = await db.scalar(
         select(DeliveryAttempt).where(DeliveryAttempt.delivery_id == delivery.id)
@@ -220,7 +222,7 @@ async def test_manual_replay_is_recorded_in_attempt_history(
 
 @pytest.mark.asyncio
 async def test_manual_replay_rejects_delivery_from_inaccessible_workspace(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
 
@@ -250,7 +252,7 @@ async def test_manual_replay_rejects_delivery_from_inaccessible_workspace(
 
 @pytest.mark.asyncio
 async def test_manual_replay_membership_in_other_workspace_does_not_grant_access(
-    db: AsyncSession,
+        db: AsyncSession,
 ):
     user = await create_user(db)
 

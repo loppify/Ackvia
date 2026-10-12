@@ -4,7 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import Delivery, Form, Submission, WorkspaceMembership, DeliveryStatus
+from app.database.models import (
+    Delivery,
+    DeliveryStatus,
+    Form,
+    Submission,
+    WorkspaceMembership,
+)
 
 
 async def get_accessible_delivery_by_id(
@@ -27,13 +33,15 @@ async def get_claimed_delivery_for_processing(
 ) -> Delivery | None:
     result = await db.execute(
         select(Delivery)
-        .where(Delivery.id == delivery_id,
-               Delivery.processing_token==processing_token,
-               Delivery.status==DeliveryStatus.PROCESSING
-               )
+        .where(
+            Delivery.id == delivery_id,
+            Delivery.processing_token == processing_token,
+            Delivery.status == DeliveryStatus.PROCESSING,
+        )
         .options(
             selectinload(Delivery.destination),
             selectinload(Delivery.submission).selectinload(Submission.form),
         )
+        .with_for_update()
     )
     return result.scalar_one_or_none()

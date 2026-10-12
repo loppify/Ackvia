@@ -85,7 +85,7 @@ async def execute_delivery_attempt(destination: Destination, message: str):
 
 
 async def finish_delivery_attempt(
-        db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
+    db: AsyncSession, delivery: Delivery, delivery_attempt: DeliveryAttempt, res: dict
 ) -> None:
     log = logger.bind(
         delivery_id=delivery.id,
@@ -99,6 +99,7 @@ async def finish_delivery_attempt(
 
     delivery_attempt.finished_at = now
     delivery.processing_started_at = None
+    delivery.processing_token = None
 
     if res.get("success", False):
         delivery_attempt.result = DeliveryAttemptResult.SUCCEEDED
@@ -154,7 +155,7 @@ async def finish_delivery_attempt(
             log.info("Delivery result unknown")
 
     try:
-        await db.flush()
+        await db.commit()
     except IntegrityError:
         await db.rollback()
         log.exception("Failed to commit delivery attempt")
@@ -179,13 +180,17 @@ def calculate_retry_delay(attempt_count: int) -> float:
     )
 
 
-async def process_delivery(delivery_id: int, processing_token: uuid.UUID, db: AsyncSession) -> None:
+async def process_delivery(
+    delivery_id: int, processing_token: uuid.UUID, db: AsyncSession
+) -> None:
     log = logger.bind(delivery_id=delivery_id, processing_token=processing_token)
     delivery = None
     attempt = None
 
     try:
-        delivery = await get_claimed_delivery_for_processing(db, delivery_id, processing_token)
+        delivery = await get_claimed_delivery_for_processing(
+            db, delivery_id, processing_token
+        )
 
         if delivery is None:
             log.warning("Delivery not found")
@@ -202,6 +207,13 @@ async def process_delivery(delivery_id: int, processing_token: uuid.UUID, db: As
             delivery.destination,
             message,
         )
+        delivery = await get_claimed_delivery_for_processing(
+            db, delivery_id, processing_token
+        )
+
+        if delivery is None:
+            log.warning("Delivery not found")
+            return
 
         await finish_delivery_attempt(
             db,
@@ -209,7 +221,6 @@ async def process_delivery(delivery_id: int, processing_token: uuid.UUID, db: As
             attempt,
             result,
         )
-
     except Exception as exc:
         log.exception("Unexpected error while processing delivery")
 
@@ -221,7 +232,9 @@ async def process_delivery(delivery_id: int, processing_token: uuid.UUID, db: As
         if delivery_db_id is None:
             raise
 
-        delivery = await get_claimed_delivery_for_processing(db, delivery_id, processing_token)
+        delivery = await get_claimed_delivery_for_processing(
+            db, delivery_id, processing_token
+        )
 
         if delivery is None:
             raise
@@ -233,6 +246,7 @@ async def process_delivery(delivery_id: int, processing_token: uuid.UUID, db: As
         error = str(exc)
         delivery.processing_started_at = None
         delivery.last_error = error
+        delivery.processing_token = None
 
         if attempt is not None:
             attempt.finished_at = now
@@ -274,8 +288,8 @@ async def queue_manual_replay(db: AsyncSession, delivery_id, user_id) -> Deliver
     if delivery is None:
         raise DeliveryNotFoundError
     if delivery.status not in (
-            DeliveryStatus.FAILED,
-            DeliveryStatus.UNKNOWN,
+        DeliveryStatus.FAILED,
+        DeliveryStatus.UNKNOWN,
     ):
         raise DeliveryNotReplayableError
 
