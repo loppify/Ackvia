@@ -6,7 +6,8 @@ from app.database.models import (
     DeliveryAttemptResult,
     DeliveryStatus,
     DeliveryTrigger,
-    FailureType, )
+    FailureType,
+)
 
 
 class DeliveryAttemptRead(BaseModel):

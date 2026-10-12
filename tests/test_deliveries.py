@@ -1327,6 +1327,7 @@ async def test_stale_processing_token_does_not_start_attempt(
     assert claimed.attempt_count == original_attempt_count
     assert called is False
 
+
 async def test_get_delivery_returns_destination_and_external_reference(
     client,
     db: AsyncSession,
@@ -1351,4 +1352,3 @@ async def test_get_delivery_returns_destination_and_external_reference(
         "type": "telegram",
         "reference": "123456789",
     }
-
